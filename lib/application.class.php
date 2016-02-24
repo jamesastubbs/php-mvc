@@ -10,20 +10,21 @@ session_start();
 
 class Application
 {
+    private $action = null;
+    private $config = null;
 	private $controller = null;
-	private $action = null;
+    private $db = null;
 	private $parameters = array();
-	public $db = null;
-
-	public function __construct()
+	
+	public function __construct($__config)
 	{
+        $this->config = $__config;
 		$this->splitUrl();
 		$maintenanceMode = $this->underMaintenance();
 		$specifiedController = (strlen($this->controller) > 0);
 		
 		if (!file_exists('./application/controller/' . $this->controller . 'Controller.php')) {
 			$this->controller = new HomeController();
-			
 			if (!$maintenanceMode && $specifiedController)
 				$this->controller->viewError(404);
 		} else {
@@ -37,7 +38,6 @@ class Application
 		}
 		
 		$methodParameters = '';
-		
 		if (method_exists($this->controller, $this->action) && !($this->action == "viewMaintenance" || $this->action == "viewError")) {
 			if (count($this->parameters) > 0) {
 				$methodParameters = $this->parameters[0];
@@ -48,15 +48,13 @@ class Application
 		} else {
 			if (strlen($this->action) > 0)
 				$this->controller->viewError(404);
-			
 			$this->action = 'index';
 		}
 		
 		if ($this->controller) {
-			$this->db = new DB();
-			$this->controller->db = $this->db;
+			$this->db = new DB($this->config);
+            Model::setDB($this->db);
 			$reflection = new ReflectionMethod($this->controller, $this->action);
-			
 			if ($reflection->isPublic())
 				$this->controller->{$this->action}($methodParameters);
 			else
@@ -86,10 +84,8 @@ class Application
 			$url = rtrim($_GET['url'], '/');
 			$url = filter_var($url, FILTER_SANITIZE_URL);
 			$url = explode('/', $url);
-			
 			$this->controller = (isset($url[0]) ? $url[0] : null);
 			$this->action = (isset($url[1]) ? $url[1] : null);
-			
 			if($this->controller && $this->action) {
 				for($i = 2; $i < count($url); $i++) {
 					array_push($this->parameters, $url[$i]);
@@ -100,7 +96,7 @@ class Application
 	
 	private function underMaintenance()
 	{
-		$maintenanceMode = filter_var(MAINTENANCE, FILTER_VALIDATE_BOOLEAN);
+		$maintenanceMode = filter_var($this->config->MAINTENANCE, FILTER_VALIDATE_BOOLEAN);
 		
 		if ($maintenanceMode) {
 			$whitelistTxtFile = @fopen("./config/whitelist.txt", 'r'); 
@@ -125,5 +121,7 @@ class Application
 	public function __deconstruct()
 	{
 		$this->db = null;
+        Model::setDB($this->db);
+        Model::setDB($this->db);
 	}
 }

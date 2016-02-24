@@ -8,9 +8,9 @@
 
 class PDODBDriver extends DBDriver
 {
-	public function __construct()
+	public function __construct($config)
 	{
-		$this->connection = new PDO('mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET, DB_USER, DB_PASS, array(PDO::ATTR_EMULATE_PREPARES => false, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION));
+		$this->connection = new PDO('mysql:host=' . $config->DB_HOST . ';dbname=' . $config->DB_NAME . ';charset=' . $config->DB_CHARSET, $config->DB_USER, $config->DB_PASS, array(PDO::ATTR_EMULATE_PREPARES => false, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION));
 	}
 
 	public function query($statement, $values)
@@ -95,11 +95,9 @@ class PDODBDriver extends DBDriver
 	{
 		for ($i = 0; $i < count($values); $i++) {
 			$statement = preg_replace('/\:[A-Za-z0-9]+/', $values[$i], $statement, 1);
-			
 			if (!strlen($values[$i]))
 				return "'" . $values[$i - 1] . "";
 		}
-		
 		return "query: " . $statement;
 	}
 }

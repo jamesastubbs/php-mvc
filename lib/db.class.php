@@ -13,16 +13,20 @@ class DB
 	 */
 	private $driver = null;
 	
+    public $dbName = null;
+    
 	/**
 	 * Initalises new sub class instance of DBDriver. The sub class is defined within the ../config/config.php file under DB_DRIVER.
 	 */
-	public function __construct()
+	public function __construct($config)
 	{
-		$dbDriverClass = strtoupper(DB_DRIVER) . "DBDriver";
-		if (!class_exists($dbDriverClass))
-			die("Unsupported MySQL server");
+        $this->dbName = $config->DB_NAME;
+		$dbDriverClass = strtoupper($config->DB_DRIVER) . "DBDriver";
+		if (!class_exists($dbDriverClass)) {
+            throw new Exception("Unsupported DB Driver");
+        }
 		
-		$this->driver = new $dbDriverClass; 
+		$this->driver = new $dbDriverClass($config);
 	}
 	
 	/**
@@ -73,8 +77,9 @@ abstract class DBDriver
 	/**
 	 * @abstract
 	 * Initalises driver object and creates connection using the definitions in the ../config/config.php file.
+     * @param   Array   Configuration object containing values to set up the database connection with.
 	 */
-	abstract function __construct();
+	abstract function __construct($config);
 	
 	/**
 	 * @abstract
@@ -82,9 +87,6 @@ abstract class DBDriver
 	 */
 	abstract function query($statement, $values);
 	
-	/**
-	 * @return	
-	 */
 	public function getConnection()
 	{
 		return $this->connection;

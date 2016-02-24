@@ -8,7 +8,6 @@
 
 abstract class Controller
 {
-	public $db = null;
 	public $title = null;
 	private $user = null;
 	protected $viewTemplate = true;
@@ -38,8 +37,24 @@ abstract class Controller
 	{
 		$this->viewFunction($view, $data, false);
 	}
-
-	private function viewFunction($view, $data, $viewTemplate)
+    
+    protected function viewToString($view, $data = array())
+    {        
+        $outputStr = "";
+        $this->viewFunction($view, $data, $this->viewTemplate, $outputStr);
+        
+        return $outputStr;
+    }
+    
+    protected function viewWithoutTemplateToString($view, $data = array())
+    {
+        $outputStr = "";
+        $this->viewFunction($view, $data, false, $outputStr);
+        
+        return $outputStr;
+    }
+    
+	private function viewFunction($view, $data, $viewTemplate, &$outputStr = null)
 	{
 		if (!is_null($data)) {
 			if (!is_null($this->user))
@@ -53,14 +68,22 @@ abstract class Controller
 		if (file_exists($viewPath)) {
 			$path = $this->templatePath();
 			
+            if ($outputStr !== null)
+                ob_start();
+            
 			if ($viewTemplate)
-				require_once $path . '/header.php';
-			require_once $viewPath;
-			if ($viewTemplate)
+                require_once $path . '/header.php';
+            
+            require_once $viewPath;
+			
+            if ($viewTemplate)
 				require_once $path . '/footer.php';
+            
+            if ($outputStr !== null)
+                $outputStr .= ob_get_clean();
 		}
-	}
-
+    }
+        
 	function viewError($errorCode) {
 		$text = '';
 		switch ($errorCode) {
@@ -117,6 +140,14 @@ abstract class Controller
 		exit(1);
 	}
 	
+	/*
+	protected function loadModel($modelName)
+	{
+		require './application/model/' . strtolower($modelName) . '.php';
+		//return new $modelName($this->db);
+	}
+	*/
+	
 	private function templatePath($specificFile = null)
 	{
 		$pathPart = '_template';
@@ -137,7 +168,7 @@ abstract class Controller
 					$pathPart = $tempPath;
 			}
 		}
-		
+		//die("./application/view/" . $pathPart);
 		return "./application/view/" . $pathPart;
 	}
 }

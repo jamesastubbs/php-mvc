@@ -8,10 +8,10 @@
 
 class MYSQLIDBDriver extends DBDriver
 {
-	public function __construct()
+	public function __construct($config)
 	{
-		$this->connection = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME) or die(mysqli_connect_error());
-		mysqli_set_charset($this->connection, DB_CHARSET);
+		$this->connection = new mysqli($config->DB_HOST, $config->DB_USER, $config->DB_PASS, $config->DB_NAME) or die(mysqli_connect_error());
+		mysqli_set_charset($this->connection, $config->DB_CHARSET);
 	}
 
 	public function getConnection()
@@ -20,7 +20,7 @@ class MYSQLIDBDriver extends DBDriver
 	}
 
 	public function query($statement, $values)
-	{
+	{        
 		$query = $this->connection->prepare($statement);
 
 		if (!$query) {			

@@ -14,23 +14,26 @@ abstract class Model extends ArrayObject
 	const StateOn = 3;
 	
 	public static $tableName;
+    static $db = null;
 	public $primaryKey;
 	public $columns;
-	private $db = null;
 	private $isSaved = false;
 	private $_tmp;
 	
-	final public function __construct($db)
+	final public function __construct()
 	{
 		parent::__construct(array(), ArrayObject::ARRAY_AS_PROPS);
-		$this->db = $db;
 	}
 	
+    public final static function setDB($db)
+    {
+        self::$db = $db;
+    }
+    
 	final function getTmp($key)
 	{
 		if (!isset($this->_tmp))
 			return null;
-		
 		return $this->_tmp[$key];
 	}
 	
@@ -38,26 +41,40 @@ abstract class Model extends ArrayObject
 	{
 		if (!isset($this->_tmp))
 			$this->_tmp = array();
-		
 		$this->_tmp[$key] = $value;
 	}
 	
+    /**
+     * Returns a model object with the type of '$relatingModelName'.
+     * The values of the relating model object are automatically populated from this model instance having performed a join query.
+     * @var     string  The class name of the relating model object.
+     * @return  mixed   The relating model object.
+     */
+    final function getRelatingModel($relatingModelName)
+    {
+        $relatingModel = new $relatingModelName();
+        $relatingModelColumns = array_keys($relatingModel->columns);
+        
+        foreach ($relatingModelColumns as $columnName) {
+			$relatingModel->{$columnName} = $this["$relatingModelName.$columnName"];
+		}
+        
+        return $relatingModel;
+    }
+    
 	public function create($fetchAfter = false)
 	{
 		$selfName = get_class($this);
-		$statement = "INSERT INTO " . DB_NAME . "." . $selfName::$tableName . " (";
+		$statement = "INSERT INTO " . $this->db->dbName . "." . $selfName::$tableName . " (";
 		$statementPart = ") VALUES (";
 		$first = true;
 		$arguments = array();
 		$columns = array_keys($this->columns);
 		$columnCount = count($columns);
-		
 		for ($i = 0; $i < $columnCount; $i++) {
 			$key = $columns[$i];
-			
 			if (array_key_exists($key, $this)) {
 				$value = $this->{$key};
-				
 				if ($first) {
 					$first = false;
 				} else {
@@ -84,7 +101,6 @@ abstract class Model extends ArrayObject
 		if ($fetchAfter && count($columns)) {
 			$statement = "SELECT ";
 			$isFirst = true;
-			
 			foreach ($columns as $column) {
 				if ($isFirst)
 					$isFirst = false;
@@ -92,7 +108,6 @@ abstract class Model extends ArrayObject
 					$statement .= ", ";
 				$statement .= $column;
 			}
-			
 			$statement .= " FROM " . $selfName::$tableName . " WHERE " . $this->primaryKey . " = ? LIMIT 1";
 			$result = $this->db->query($statement, $this->{$this->primaryKey});
 			
@@ -114,24 +129,21 @@ abstract class Model extends ArrayObject
 		return (bool)$this->{$this->primaryKey};
 	}
 	
-	public static function select(DB $db, ModelPredicate $predicate = null)
+	public static function select(ModelPredicate $predicate = null)
 	{
 		$selfName = get_called_class();
-		return $selfName::selectColumns($db, "*", $predicate);
+		return $selfName::selectColumns("*", $predicate);
 	}
 	
-	public static function selectColumns(DB $db, $columns, ModelPredicate $predicate = null)
+	public static function selectColumns($columns, ModelPredicate $predicate = null)
 	{
 		$selfName = get_called_class();
 		$statement = "SELECT ";
-		
 		if (gettype($columns) == "string") {
 			if (preg_match("/\ /", $columns)) {
 				$strComponents = explode(" ", $columns);
-				
 				for ($i = 0; $i < count($strComponents); $i++) {
 					$strComponent = $strComponents[$i];
-					
 					if (preg_match("/\\$::(\w+)\./", $strComponent)) {
 						$strComponentParts = explode(".", $strComponent);
 						$modelName = preg_replace("/\\\$::/", "", $strComponentParts[0]);
@@ -139,14 +151,12 @@ abstract class Model extends ArrayObject
 						$strComponents[$i] = $modelName::$tableName . ".$columnName";
 					}
 				}
-				
 				$columns = implode(" ", $strComponents);
+				
 			}
-			
 			$statement .= "$columns ";
 		} else {
 			$first = true;
-			
 			foreach ($columns as $column) {
 				if ($first)
 					$first = false;
@@ -155,7 +165,6 @@ abstract class Model extends ArrayObject
 				
 				if (gettype($column) != "string") {
 					$subFirst = true;
-					
 					foreach ($column as $columnName) {
 						if ($subFirst)
 							$subFirst = false;
@@ -170,47 +179,41 @@ abstract class Model extends ArrayObject
 		}
 		
 		$statement .= " FROM " . $selfName::$tableName;
-		
 		if (isset($predicate))
 			$statement .= " " . $predicate->format;
 		
-		$fetchedData = $db->query($statement, (isset($predicate) ? $predicate->arguments : null));
+		$fetchedData = self::$db->query($statement, (isset($predicate) ? $predicate->arguments : null));
 		
 		$fetchedObjects = array();
 		
 		foreach ($fetchedData as $data) {
-			$model = new $selfName($db);
-			
+			$model = new $selfName();
 			foreach ($data as $key => $value) {
 				$model->{$key} = $value;
 				$oldKey = "__old_$key";
 				$model->{$oldKey} = $value;
 			}
-			
 			array_push($fetchedObjects, $model);
 		}
 		
 		return $fetchedObjects;
 	}
 	
-	public static function selectWith(DB $db, ModelPredicate $predicate = null)
+	public static function selectWith(ModelPredicate $predicate = null)
 	{
 		$selfName = get_called_class();
-		return $selfName::selectColumnsWith($db, "*", $predicate);
+		return $selfName::selectColumnsWith("*", $predicate);
 	}
 	
-	public static function selectColumnsWith(DB $db, $columns, ModelPredicate $predicate = null)
+	public static function selectColumnsWith($columns, ModelPredicate $predicate = null)
 	{
 		$selfName = get_called_class();
 		$statement = "SELECT ";
-		
 		if (gettype($columns) == "string") {
 			if (preg_match("/\ /", $columns)) {
 				$strComponents = explode(" ", $columns);
-				
 				for ($i = 0; $i < count($strComponents); $i++) {
 					$strComponent = $strComponents[$i];
-					
 					if (preg_match("/\\$::(\w+)\./", $strComponent)) {
 						$strComponentParts = explode(".", $strComponent);
 						$modelName = preg_replace("/\\\$::/", "", $strComponentParts[0]);
@@ -221,11 +224,9 @@ abstract class Model extends ArrayObject
 				$columns = implode(" ", $strComponents);
 				
 			}
-			
 			$statement .= "$columns ";
 		} else {
 			$first = true;
-			
 			foreach ($columns as $column) {
 				if ($first)
 					$first = false;
@@ -234,7 +235,6 @@ abstract class Model extends ArrayObject
 				
 				if (gettype($column) != "string") {
 					$subFirst = true;
-					
 					foreach ($column as $columnName) {
 						if ($subFirst)
 							$subFirst = false;
@@ -250,7 +250,7 @@ abstract class Model extends ArrayObject
 		
 		$statement .= " FROM " . $selfName::$tableName;
 		
-		$model = new $selfName($db);
+		$model = new $selfName();
 		$model->setTmp("state", 1);
 		$model->setTmp("statement", $statement);
 		$model->setTmp("predicate", (isset($predicate) ? $predicate->format : null));
@@ -279,7 +279,6 @@ abstract class Model extends ArrayObject
 		if (!isset($this->_tmp) || !(($this->_tmp["state"] != 1 || $this->_tmp["state"] != 3))) {
 			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN))
 				$this->debug("join");
-			
 			return $this;
 		}
 
@@ -307,7 +306,6 @@ abstract class Model extends ArrayObject
 		if (!isset($this->_tmp) || $this->_tmp["state"] != 2) {
 			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN))
 				$this->debug("on");
-			
 			return $this;
 		}
 
@@ -330,7 +328,6 @@ abstract class Model extends ArrayObject
 		if (!isset($this->_tmp) || !($this->_tmp["state"] != 1 || $this->_tmp["state"] != 3)) {
 			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN))
 				$this->debug("execute");
-			
 			return $this;
 		}
 		
@@ -351,11 +348,9 @@ abstract class Model extends ArrayObject
 				if (!$joinDefinition["is_table"]) {
 					$tableName = $childModel::$tableName;
 					$parentTableName = $parentModel::$tableName;
-					
 					if (!array_key_exists($parentModel, $relationships)) {
 						$relationships[$parentModel] = array();
 					}
-					
 					$relationships[$parentModel][$childModel] = array(
 						"primaryKey" => $primaryKey,
 						"foreignKey" => $foreignKey
@@ -364,22 +359,18 @@ abstract class Model extends ArrayObject
 
 				if ($parentTableName == $tableName)
 					die(var_dump($joinDefinition));
-				
 				$statement .= " $joinMethod JOIN $tableName ON $parentTableName.$primaryKey = $tableName.$foreignKey";
 			}
 			
 			$columns = array();
-			
 			foreach ($relationships as $parentModelName => $parentRelationships) {
 				if (!array_key_exists($parentModelName, $columns)) {
 					$modelColumns = array();
-					$model = new $parentModelName($this->db);
-					
+					$model = new $parentModelName();
 					foreach (array_keys($model->columns) as $modelColumnName) {
 						$columnString = ($parentModelName::$tableName . ".$modelColumnName AS '$parentModelName.$modelColumnName'");
 						array_push($modelColumns, $columnString);
 					}
-					
 					$columns[$parentModelName] = $modelColumns;
 					$model = null;
 				}
@@ -387,13 +378,11 @@ abstract class Model extends ArrayObject
 				foreach ($parentRelationships as $childModelName => $childRelationship) {
 					if (!array_key_exists($childModelName, $columns)) {
 						$modelColumns = array();
-						$model = new $childModelName($this->db);
-						
+						$model = new $childModelName();
 						foreach (array_keys($model->columns) as $modelColumnName) {
-							$columnString = ($childModelName::$tableName . ".$modelColumnName AS '$childModelName.$modelColumnName'");
-							array_push($modelColumns, $columnString);
+							$columnString = ($childModelName::$tableName . ".$modelColumnName AS '$childModelName.$modelColumnName'");							
+                            array_push($modelColumns, $columnString);
 						}
-						
 						$columns[$childModelName] = $modelColumns;
 						$model = null;
 					}
@@ -402,12 +391,10 @@ abstract class Model extends ArrayObject
 		}
 		
 		$selectStatement = "SELECT ";
-		
 		if (gettype($columns) == "string")
 			$selectStatement .= "$columns ";
 		else {
 			$first = true;
-			
 			foreach ($columns as $column) {
 				if ($first)
 					$first = false;
@@ -416,7 +403,6 @@ abstract class Model extends ArrayObject
 
 				if (gettype($column) != "string") {
 					$subFirst = true;
-					
 					foreach ($column as $columnName) {
 						if ($subFirst)
 							$subFirst = false;
@@ -436,25 +422,23 @@ abstract class Model extends ArrayObject
 		
 		if (isset($this->_tmp["predicate"]))
 			$statement .= " " . $this->_tmp["predicate"];
-		
 		$arguments = $this->_tmp["arguments"];
 		
-		$fetchedData = $this->db->query($statement, (isset($arguments) ? $arguments : null));
+		$fetchedData = self::$db->query($statement, (isset($arguments) ? $arguments : null));
 		
 		$fetchedObjects = array();
 		
 		foreach ($fetchedData as $data) {
-			$model = new $selfName($this->db);
-			
+			$model = new $selfName();
 			foreach ($data as $key => $value) {
-				if (strpos($key, "$selfName.") !== false)
-					$key = str_replace("$selfName.", "", $key);
+				if (strpos($key, "$selfName.") === 0) {
+                    $key = str_replace("$selfName.", "", $key);
+                    $oldKey = "__old_$key";
+                    $model->{$oldKey} = $value;
+                }
 				
 				$model->{$key} = $value;
-				$oldKey = "__old_$key";
-				$model->{$oldKey} = $value;
 			}
-			
 			array_push($fetchedObjects, $model);
 		}
 		
@@ -466,11 +450,10 @@ abstract class Model extends ArrayObject
 	public function update()
 	{	
 		$selfName = get_called_class();
-		$statement = "UPDATE " . DB_NAME . "." . $selfName::$tableName . " SET ";
+		$statement = "UPDATE " . self::$db->dbName . "." . $selfName::$tableName . " SET ";
 		$arguments = array();
 		
 		$first = true;
-		
 		foreach ($this as $key => $value) {
 			if (preg_match("/__old_/", $key) || !array_key_exists($key, $this->columns)) {
 				continue;
@@ -492,7 +475,7 @@ abstract class Model extends ArrayObject
 		if ((bool)count($arguments)) {
 			$primaryKeyName = $this->primaryKey;
 			$statement .= " WHERE $primaryKeyName = " . $this->{$primaryKeyName};
-			return (bool)$this->db->query($statement, $arguments);
+			return (bool)self::$db->query($statement, $arguments);
 		}
 		
 		return true;
@@ -502,7 +485,7 @@ abstract class Model extends ArrayObject
 	{
 		$selfName = get_class($this);
 		$primaryKeyName = $this->primaryKey;
-		return (bool)$this->db->query("DELETE FROM " . $selfName::$tableName . " WHERE $primaryKeyName = " . $this->{$primaryKeyName});
+		return (bool)self::$db->query("DELETE FROM " . $selfName::$tableName . " WHERE $primaryKeyName = " . $this->{$primaryKeyName});
 	}
 	
 	public static function columns()
@@ -514,7 +497,6 @@ abstract class Model extends ArrayObject
 		$model = null;
 		
 		$columns = array();
-		
 		foreach (array_keys($_columns) as $columnName) {
 			$columnName = $tableName . ".$columnName";
 			array_push($columns, $columnName);
@@ -562,10 +544,8 @@ final class ModelPredicate
 	{
 		if (preg_match("/\ /", $str)) {
 			$strComponents = explode(" ", $str);
-			
 			for ($i = 0; $i < count($strComponents); $i++) {
 				$strComponent = $strComponents[$i];
-				
 				if (preg_match("/\\$::(\w+)\./", $strComponent)) {
 					$strComponentParts = explode(".", $strComponent);
 					$modelName = preg_replace("/\\\$::/", "", $strComponentParts[0]);
@@ -573,13 +553,11 @@ final class ModelPredicate
 					$strComponents[$i] = $modelName::$tableName . ".$columnName";
 				}
 			}
-			
 			$str = implode(" ", $strComponents);
 		}
 
 		$this->format = $str;
 		$arguments = array_slice(func_get_args(), 1);
-		
 		if (isset($arguments) && (bool)count($arguments)) {
 			$this->arguments = $arguments;
 		}

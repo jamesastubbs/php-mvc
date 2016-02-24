@@ -3,20 +3,33 @@
 /**
  * @package	PHP MVC Framework
  * @author 	James Stubbs
- * @version 1.0
+ * @version 1.1
  */
 
+
+date_default_timezone_set("Europe/London");
+
 require 'config/config.php';
+$config = new ArrayObject($config, ArrayObject::ARRAY_AS_PROPS);
+
+define('DEBUG', $config->DEBUG);
+define('MAINTENANCE', $config->MAINTENANCE);
+define('TITLE', $config->TITLE);
+define('URL', 'http://' . explode($config->NAME, $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'])[0] . $config->NAME);
+define('WHITELIST', $config->WHITELIST);
+
+if (DEBUG) {
+    error_reporting(E_ALL);
+    ini_set("display_errors", 1);
+    ini_set('xdebug.var_display_max_depth', -1);
+    ini_set('xdebug.var_display_max_children', -1);
+    ini_set('xdebug.var_display_max_data', -1);
+}
+
 require 'lib/application.class.php';
 require 'lib/controller.class.php';
 require 'lib/db.class.php';
 require 'lib/model.class.php';
-
-error_reporting(E_ALL);
-ini_set("display_errors", 1);
-date_default_timezone_set("Europe/London");
-
-define('URL', 'http://' . explode(NAME, $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'])[0] . NAME);
 
 foreach (scandir('lib/_dbdrivers') as $file) { //require all files located in the '_dbdrivers' directory in 'lib'
 	if (strcmp($file, ".") && strcmp($file, ".."))
@@ -38,4 +51,4 @@ foreach (scandir('application/controller') as $file) { //require all files locat
 		require 'application/controller/' . $file;
 }
 
-new Application();
+$application = new Application($config);
