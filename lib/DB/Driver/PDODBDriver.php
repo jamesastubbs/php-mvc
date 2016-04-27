@@ -6,6 +6,8 @@
  * @version 1.0
  */
 
+namespace \PHPMVC\DBDriver;
+
 class PDODBDriver extends DBDriver
 {
 	public function __construct($config)

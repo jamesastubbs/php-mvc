@@ -6,11 +6,16 @@
  * @version 1.0
  */
 
+namespace PHPMVC\DB\Driver;
+
+use PHPMVC\DB\Driver\DBDriver;
+use PHPMVC\Foundation\Application;
+
 class MYSQLIDBDriver extends DBDriver
 {
 	public function __construct($config)
 	{
-		$this->connection = new mysqli($config->DB_HOST, $config->DB_USER, $config->DB_PASS, $config->DB_NAME) or die(mysqli_connect_error());
+		$this->connection = new \mysqli($config->DB_HOST, $config->DB_USER, $config->DB_PASS, $config->DB_NAME) or die(mysqli_connect_error());
 		mysqli_set_charset($this->connection, $config->DB_CHARSET);
 	}
 
@@ -26,7 +31,8 @@ class MYSQLIDBDriver extends DBDriver
 		if (!$query) {			
 			Application::log("MySQLi error: " . $this->connection->error . " - query: " . $this->debugQuery($statement, $values), 2);
 			
-			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN)) {
+            /*
+			if (filter_var(Application::getConfigValue('DEBUG'), FILTER_VALIDATE_BOOLEAN)) {
 				$backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
 				$backtraceStr = "";
 				
@@ -35,8 +41,9 @@ class MYSQLIDBDriver extends DBDriver
 				
 				die("<strong>MySQLi Error:</strong> " . $this->connection->error . "<br />" . PHP_EOL . "<br />" . PHP_EOL . "<strong>Backtrace</strong>: $backtraceStr<br />" . PHP_EOL . "<strong>Query:</strong> " . $this->debugQuery($statement, $values));
 			}
+            */
 			
-			return false;
+            throw new \Exception('Query error.');
 		}
 		
 		//die(var_dump($values));
@@ -67,6 +74,7 @@ class MYSQLIDBDriver extends DBDriver
 				}
 				$_values[$i] = &$values[$i];
 			}
+            
 			//die(var_dump($_values));
 			call_user_func_array(array($query, "bind_param"), array_merge(array($bindTypes), $_values));
 		}

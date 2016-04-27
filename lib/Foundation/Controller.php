@@ -1,0 +1,262 @@
+<?php
+
+/**
+ * @package	PHP MVC Framework
+ * @author 	James Stubbs
+ * @version 1.0
+ */
+
+namespace PHPMVC\Foundation;
+
+use PHPMVC\Foundation\Application;
+
+abstract class Controller
+{
+    public $title = null;
+    protected $globalViewDataOn = true;
+    protected $loginCheck = false;
+	protected $user = null;
+	protected $viewTemplate = true;
+    protected static $db = null;
+    protected static $rootDir = null;
+    protected static $userClass = null;
+    protected static $userSessionKey = null;
+	
+    final public static function setDB($db)
+    {
+        self::$db = $db;
+    }
+    
+    final public static function setUserClass($userClass, $userSessionKey)
+    {
+        self::$userClass = $userClass;
+        self::$userSessionKey = $userSessionKey;
+    }
+    
+	public function index()
+	{
+		$this->view('index');
+	}
+	
+    /**
+     * @return  array   Data to be passed with each view call regardless of whether the controller presents the view with or without the template.
+     */
+    protected function globalViewData()
+    {
+        return null;
+    }
+    
+    protected function isLoggedIn()
+	{
+        if ($this->loginCheck === true) {
+            return ($this->user !== null);
+        }
+        
+        if (self::$userClass !== null && self::$userSessionKey !== null) {
+            $sessionKey = self::$userSessionKey;
+            
+            if (isset($_SESSION[$sessionKey])) {
+                $userClass = self::$userClass;
+                $sessionID = $_SESSION[$sessionKey];
+                
+                $user = $userClass::findBySession($sessionID);
+                
+                if ($user !== null) {
+                    $this->user = $user;
+                    return true;
+                } else {
+                    unset($_SESSION[$sessionKey]);
+                }
+            }
+        }
+        
+        return false;
+	}
+    
+	public function viewMaintenance()
+	{
+		$templatePath = $this->getTemplatePath('maintenance');
+		if (file_exists($templatePath . '/maintenance.php')) {
+			require_once $templatePath . '/maintenance.php';
+		} else {
+			$this->viewError(503);
+        }
+		
+		exit(1);
+	}
+	
+	protected function view($view, $data = array())
+	{
+		$this->viewFunction($view, $data, $this->viewTemplate);
+	}
+
+	protected function viewWithoutTemplate($view, $data = array())
+	{
+		$this->viewFunction($view, $data, false);
+	}
+    
+    protected function viewToString($view, $data = array())
+    {        
+        $outputStr = '';
+        $this->viewFunction($view, $data, $this->viewTemplate, $outputStr);
+        
+        return $outputStr;
+    }
+    
+    protected function viewWithoutTemplateToString($view, $data = array())
+    {
+        $outputStr = '';
+        $this->viewFunction($view, $data, false, $outputStr);
+        
+        return $outputStr;
+    }
+    
+	protected function viewFunction($view, $data, $viewTemplate, &$outputStr = null)
+	{
+		if (!is_null($data)) {
+            if ($viewTemplate) {
+			 $data['title'] = $this->title;
+            }
+            
+            if ($this->globalViewDataOn) {
+                if ($this->isLoggedIn() && !is_null($this->user)) {
+				    $data['user'] = $this->user;
+                }
+                
+                $globalViewData = $this->globalViewData();
+                
+                if (!!$globalViewData) {
+                    $data = array_merge($globalViewData, $data);
+                }
+            }
+		}
+        
+        if (self::$rootDir === null) {
+            self::$rootDir = Application::getConfigValue('ROOT');
+        }
+        
+		$selfNameParts = explode('\\', get_called_class());
+        $selfName = array_pop($selfNameParts);
+        $viewPath = self::$rootDir . '/application/View/' . explode('Controller', $selfName)[0] . "/$view.php";
+		
+        if (file_exists($viewPath)) {
+            if ($outputStr !== null) {
+                ob_start();
+            }
+            
+			if ($viewTemplate) {
+                $this->viewHeader($data);
+            }
+            
+            include $viewPath;
+            
+            if ($viewTemplate) {
+				$this->viewFooter($data);
+            }
+            
+            if ($outputStr !== null) {
+                $outputStr .= ob_get_clean();
+            }
+		} else {
+            throw new \Exception("View for path: '$viewPath' not found.");
+        }
+    }
+    
+    protected function viewHeader($data)
+    {
+        if ($path = $this->getTemplatePath('header')) {
+            include $path . '/header.php';
+        }
+    }
+    
+    protected function viewFooter($data)
+    {
+        if ($path = $this->getTemplatePath('footer')) {
+            include $path . '/footer.php';
+        }
+    }
+    
+    // TODO: reflactor status code presentation.
+	function viewError($errorCode) {
+		$text = '';
+		switch ($errorCode) {
+			case 100: $text = 'Continue'; break;
+			case 101: $text = 'Switching Protocols'; break;
+			case 200: $text = 'OK'; break;
+			case 201: $text = 'Created'; break;
+			case 202: $text = 'Accepted'; break;
+			case 203: $text = 'Non-Authoritative Information'; break;
+			case 204: $text = 'No Content'; break;
+			case 205: $text = 'Reset Content'; break;
+			case 206: $text = 'Partial Content'; break;
+			case 300: $text = 'Multiple Choices'; break;
+			case 301: $text = 'Moved Permanently'; break;
+			case 302: $text = 'Moved Temporarily'; break;
+			case 303: $text = 'See Other'; break;
+			case 304: $text = 'Not Modified'; break;
+			case 305: $text = 'Use Proxy'; break;
+			case 400: $text = 'Bad Request'; break;
+			case 401: $text = 'Unauthorized'; break;
+			case 402: $text = 'Payment Required'; break;
+			case 403: $text = 'Forbidden'; break;
+			case 404: $text = 'Not Found'; break;
+			case 405: $text = 'Method Not Allowed'; break;
+			case 406: $text = 'Not Acceptable'; break;
+			case 407: $text = 'Proxy Authentication Required'; break;
+			case 408: $text = 'Request Time-out'; break;
+			case 409: $text = 'Conflict'; break;
+			case 410: $text = 'Gone'; break;
+			case 411: $text = 'Length Required'; break;
+			case 412: $text = 'Precondition Failed'; break;
+			case 413: $text = 'Request Entity Too Large'; break;
+			case 414: $text = 'Request-URI Too Large'; break;
+			case 415: $text = 'Unsupported Media Type'; break;
+			case 500: $text = 'Internal Server Error'; break;
+			case 501: $text = 'Not Implemented'; break;
+			case 502: $text = 'Bad Gateway'; break;
+			case 503: $text = 'Service Unavailable'; break;
+			case 504: $text = 'Gateway Time-out'; break;
+			case 505: $text = 'HTTP Version not supported'; break;
+			default: $text = 'Unknown HTTP Status Code'; break;
+		}
+
+		$protocol = (isset($_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : 'HTTP/1.0');
+
+		$headerStr = "$errorCode $text";
+
+		header("$protocol $headerStr");
+		$data = array('title' => 'Error', 'code' => $errorCode, 'message' => $text);
+		$templatePath = $this->getTemplatePath('error');
+		require_once $templatePath . '/header.php';
+		require_once $templatePath . '/error.php';
+		require_once $templatePath . '/footer.php';
+		exit(1);
+	}
+	
+	private function getTemplatePath($specificFile = null)
+	{       
+		$selfNameParts = explode('\\', get_called_class());
+        $selfName = explode('Controller', array_pop($selfNameParts))[0];
+        $templatePath = realpath(self::$rootDir . '/application/View');
+        
+        if ($templatePath !== false) {
+            $searchingPath = "/$selfName/_template";
+            
+            if ($specificFile !== null) {
+                $searchingPath .= "/$specificFile.php";
+            } else {
+                $searchingPath .= '/header.php';
+            }
+            
+            if (file_exists("$templatePath/$searchingPath")) {
+                $templatePath .= "/$selfName/_template";
+            } else {
+                $templatePath .= '/_template';
+            }
+        } else {
+            $templatePath = '';
+        }
+        
+		return $templatePath;
+	}
+}

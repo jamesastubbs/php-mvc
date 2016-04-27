@@ -1,1 +1,0 @@
-		<p><b><?php echo $data['code']; ?></b> - <?php echo $data['message']; ?></p>
