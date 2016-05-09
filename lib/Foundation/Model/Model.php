@@ -9,6 +9,8 @@
 namespace PHPMVC\Foundation\Model;
 
 use \PHPMVC\Foundation\Application;
+use \PHPMVC\Foundation\Model\ClassResolver;
+use \PHPMVC\Foundation\Model\ModelPredicate;
 
 abstract class Model extends \ArrayObject
 {
@@ -31,51 +33,55 @@ abstract class Model extends \ArrayObject
 	public static $tableName;
     public static $relationships = [];
     public static $primaryKey = null;
+    public static $columns;
     protected static $db = null;
     protected static $_cachedModels = [];
-	public $columns;
-    private $modelNamespace = null;
-	private $isSaved = false;
+    private $isSaved = false;
 	private $_tmp;
 	
 	final public function __construct()
 	{
 		parent::__construct(array(), \ArrayObject::ARRAY_AS_PROPS);
-        $this->modelNamespace = Application::getConfigValue('NAME') . '\\Model\\';
 	}
 	
     final public static function setDB($db)
     {
         self::$db = $db;
+        $selfClass = get_called_class();
     }
     
-	final function getTmp($key)
+	final protected function getTmp($key)
 	{
-		if (!isset($this->_tmp))
+		if (!isset($this->_tmp)) {
 			return null;
+        }
+        
 		return $this->_tmp[$key];
 	}
 	
-	final function setTmp($key, $value)
+	final protected function setTmp($key, $value)
 	{
-		if (!isset($this->_tmp))
-			$this->_tmp = array();
+		if (!isset($this->_tmp)) {
+			$this->_tmp = [];
+        }
+        
 		$this->_tmp[$key] = $value;
 	}
 	
     /**
      * Returns a model object with the type of '$relatingModelName'.
      * The values of the relating model object are automatically populated from this model instance having performed a join query.
-     * @var     string  The class name of the relating model object.
-     * @return  mixed   The relating model object.
+     * @param       string  $relatingModelName      The class name of the relating model object.
+     * @return      mixed                           The relating model object.
      */
-    final public function getRelatingModel($relatingModelName)
+    final public function getRelatingModel($relatingModelClassName)
     {
-        $selfName = get_class($this);
-        $relatingModelClass = $this->modelNamespace . $relatingModelName;
+        $selfClass = get_class($this);
+        $relatingModelClass = ClassResolver::resolve($relatingModelClassName, $relatingModelName);
+                
         $relatingModelPrimaryKey = $relatingModelClass::$primaryKey;
         $relatingModel = new $relatingModelClass();
-        $modelIsThisClass = ($relatingModelClass === $selfName);
+        $modelIsThisClass = ($relatingModelClass === $selfClass);
         
         if ($modelIsThisClass) {
             $relatingModelPrimaryKeyValue = "{$this->{$relatingModelPrimaryKey}}";
@@ -83,11 +89,11 @@ abstract class Model extends \ArrayObject
             $relatingModelPrimaryKeyValue = "{$this->{"$relatingModelName.$relatingModelPrimaryKey"}}";
         }
         
-        if (array_key_exists($relatingModelName, self::$_cachedModels) && array_key_exists($relatingModelPrimaryKeyValue, self::$_cachedModels[$relatingModelName])) {
-            return self::$_cachedModels[$relatingModelName][$relatingModelPrimaryKeyValue];
+        if (array_key_exists($relatingModelName, self::$_cachedModels) && array_key_exists($relatingModelPrimaryKeyValue, self::$_cachedModels[$relatingModelClass])) {
+            return self::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue];
         }
         
-        $relatingModelColumns = array_keys($relatingModel->columns);
+        $relatingModelColumns = array_keys($relatingModelClass::$columns);
         
         foreach ($relatingModelColumns as $columnName) {
 			$key = ($modelIsThisClass ? '' : "$relatingModelName.") . $columnName;
@@ -100,7 +106,7 @@ abstract class Model extends \ArrayObject
             }
 		}
         
-        self::$_cachedModels[$relatingModelName][$relatingModelPrimaryKeyValue] = $relatingModel;
+        self::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue] = $relatingModel;
         
         return $relatingModel;
     }
@@ -121,7 +127,9 @@ abstract class Model extends \ArrayObject
                 $joinDefinition['method'] = $relationship['relationship'];
                 $joinDefinition['property_key'] = $relationshipName;
                 $joinDefinition['primary_key'] = $relationship['column'];
-                $joinDefinition['foreign_key'] = array_key_exists('relatedColumn', $relationship) ? $relationship['relatedColumn'] : $relationship['column'];
+                
+                // set the foreign key as the same column name of the primary key, if the key 'joinColumn' doesn't exist.
+                $joinDefinition['foreign_key'] = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $relationship['column'];
                 break;
             }
         }
@@ -187,7 +195,7 @@ abstract class Model extends \ArrayObject
 		$statementPart = ') VALUES (';
 		$first = true;
 		$arguments = array();
-		$columns = array_keys($this->columns);
+		$columns = array_keys($selfName::$columns);
 		$columnCount = count($columns);
         
 		for ($i = 0; $i < $columnCount; $i++) {
@@ -320,7 +328,7 @@ abstract class Model extends \ArrayObject
                 
                 if ($key !== $selfName::$primaryKey) {
 				    $oldKey = "__old_$key";
-				    $model->{$oldKey} = $value;
+				    $model->{$oldKey} = self::getColumnValue($key, $value, false);
                 }
 			}
 			array_push($fetchedObjects, $model);
@@ -347,6 +355,8 @@ abstract class Model extends \ArrayObject
                 for ($i = 0; $i < count($strComponents); $i++) {
 					$strComponent = $strComponents[$i];
 					
+                    // TODO: refactor column name resolution.
+                    // use either regex or explode, not both.
                     if (preg_match('/\\$::(\w+)\./', $strComponent)) {
 						$strComponentParts = explode('.', $strComponent);
 						$modelName = preg_replace('/\\\$::/', '', $strComponentParts[0]);
@@ -359,7 +369,7 @@ abstract class Model extends \ArrayObject
 				
 			}
             
-			$statement .= '$columns ';
+			$statement .= "$columns ";
 		} else {
 			$first = true;
 			foreach ($columns as $column) {
@@ -400,6 +410,26 @@ abstract class Model extends \ArrayObject
 		return $model;
 	}
 	
+    /**
+     * Automatically builds the join queries based on the relationships declared in the '$parentModel'.
+     * @param   string      $parentModel
+     * @return  Model
+     */
+    public function innerJoinRelationships($parentModel = null)
+    {
+        $selfClass = get_class($this);
+        $class = ClassResolver::resolve($parentModel === null ? $parentModel : $selfClass);
+        $relationshipsNames = array_keys($class::$relationships);
+        $model = $this;
+        
+        foreach ($relationshipsNames as $relationshipName) {
+            $relationship = $class::getRelationship($relationshipName);
+            $model = $model->innerJoin($class, $relationship['model'])->on($relationship['joinColumn'], $relationship['column']);
+        }
+        
+        return $this;
+    }
+    
 	public function innerJoin($parentModel, $childModel, $isTable = false)
 	{
 		return $this->joinMethod($parentModel, $childModel, 'INNER', $isTable);
@@ -498,18 +528,23 @@ abstract class Model extends \ArrayObject
 		$relationships = [];
 		$columns = $this->_tmp;
 		$statement = '';
-        $modelNamespace = $this->modelNamespace;
+        $selfClass = get_called_class();
         
 		if (isset($this->_tmp['joins'])) {
-			foreach ($this->_tmp['joins'] as $joinDefinition) {
-				$joinMethod = $joinDefinition['method'];                
+			$joinDefinitions = $this->_tmp['joins'];
+            $joinDefinitionsCount = count($joinDefinitions);
+            
+            for ($i = 0; $i < $joinDefinitionsCount; $i++) {
+                $joinDefinition = $joinDefinitions[$i];
+				$joinMethod = $joinDefinition['method'];
                 $tableName = $joinDefinition['child_model'];
-				$childModel = $modelNamespace . $tableName;
+				$childModel = ClassResolver::resolve($tableName);
+                
 				$parentTableName = $joinDefinition['parent_model'];
-				$parentModel = $modelNamespace . $parentTableName;
+				$parentModel = ClassResolver::resolve($parentTableName);
 				$primaryKey = $joinDefinition['primary_key'];
 				$foreignKey = $joinDefinition['foreign_key'];
-
+                
 				if (!$joinDefinition['is_table']) {
 					$tableName = $childModel::$tableName;
 					$parentTableName = $parentModel::$tableName;
@@ -523,14 +558,15 @@ abstract class Model extends \ArrayObject
 				}
 
 				if ($parentTableName == $tableName) {
-					die(var_dump($joinDefinition));
+                    var_dump($joinDefinition);
+					die(__FILE__ . ':' . __LINE__);
                 }
                 
 				$statement .= " $joinMethod JOIN $tableName ON $parentTableName.$primaryKey = $tableName.$foreignKey";
-			}
+            }
 			
 			$columns = [];
-            $modelNamespaceRegex = '/' . $this->modelNamespace . '\/';
+            //$modelNamespaceRegex = '/' . $this->modelNamespace . '\/';
             
 			foreach ($relationships as $parentModelClass => $parentRelationships) {
 				if (!array_key_exists($parentModelClass, $columns)) {
@@ -538,14 +574,14 @@ abstract class Model extends \ArrayObject
                     $parentModelName = array_pop($parentModelNameParts);
                     
 					$modelColumns = [];
-					$model = new $parentModelClass();
-                                        
-					foreach (array_keys($model->columns) as $modelColumnName) {
+                    $parentModelColumnsKeys = array_keys($parentModelClass::$columns);
+                    
+					foreach ($parentModelColumnsKeys as $modelColumnName) {
                         $columnString = ($parentModelClass::$tableName . ".$modelColumnName AS '$parentModelName.$modelColumnName'");
 						array_push($modelColumns, $columnString);
 					}
+                    
 					$columns[$parentModelName] = $modelColumns;
-					$model = null;
 				}
 				
 				foreach ($parentRelationships as $childModelClass => $childRelationship) {
@@ -553,24 +589,24 @@ abstract class Model extends \ArrayObject
 						$childModelNameParts = explode('\\', $childModelClass);
                         $childModelName = array_pop($childModelNameParts);
                         
-                        $modelColumns = array();
-						$model = new $childModelClass();
+                        $modelColumns = [];
+                        $childModelColumnsKeys = array_keys($childModelClass::$columns);
                         
-						foreach (array_keys($model->columns) as $modelColumnName) {
+						foreach ($childModelColumnsKeys as $modelColumnName) {
 							$columnString = ($childModelClass::$tableName . ".$modelColumnName AS '$childModelName.$modelColumnName'");
                             array_push($modelColumns, $columnString);
 						}
+                        
 						$columns[$childModelName] = $modelColumns;
-						$model = null;
 					}
 				}
 			}
 		}
-		
+        
 		$selectStatement = 'SELECT ';
         
 		if (gettype($columns) == 'string') {
-			$selectStatement .= '$columns ';
+			$selectStatement .= "$columns ";
         } else {
 			$first = true;
 			
@@ -611,7 +647,7 @@ abstract class Model extends \ArrayObject
         }
         
 		$arguments = $this->_tmp['arguments'];
-		        
+        
 		$fetchedData = self::$db->query($statement, (isset($arguments) ? $arguments : null));
         $fetchedObjects = [];
 		
@@ -651,7 +687,7 @@ abstract class Model extends \ArrayObject
                     self::mapModelRelationships($parentModel, $childModel, $joinDefinition);
                 }
                 
-                $modelToAdd = $fetchedObject->getRelatingModel($selfName);
+                $modelToAdd = $fetchedObject->getRelatingModel($selfClass);
                 if (!in_array($modelToAdd, $returningObjects)) {
                     array_push($returningObjects, $modelToAdd);
                 }
@@ -671,10 +707,11 @@ abstract class Model extends \ArrayObject
         $selfPrimaryKey = $selfName::$primaryKey;
 		$statement = 'UPDATE ' . self::$db->dbName . '.' . $selfName::$tableName . ' SET ';
 		$arguments = array();
+        $columns = $selfName::$columns;
 		
 		$first = true;
 		foreach ($this as $key => $value) {
-			if (preg_match('/__old_/', $key) || !array_key_exists($key, $this->columns) || $key === $selfPrimaryKey) {
+			if (preg_match('/__old_/', $key) || !array_key_exists($key, $columns) || $key === $selfPrimaryKey) {
 				continue;
 			}
 			
@@ -688,7 +725,8 @@ abstract class Model extends \ArrayObject
 					$statement .= ', ';
                 }
                 
-                $value = $this->getDatabaseValue($key, $value);
+                $value = self::getColumnValue($key, $value);
+                $this->{$key} = $value;
 				$statement .= "$key = ?";
 				array_push($arguments, $value);
 			}
@@ -696,7 +734,7 @@ abstract class Model extends \ArrayObject
 		
 		if (count($arguments) > 0) {
 			$statement .= " WHERE $selfPrimaryKey = " . $this->{$selfPrimaryKey};
-            $result = call_user_func_array([self::$db, 'query'], $arguments);
+            $result = call_user_func_array([self::$db, 'query'], [$statement, $arguments]);
             
 			return $result;
 		}
@@ -712,12 +750,13 @@ abstract class Model extends \ArrayObject
 		return (bool)self::$db->query("DELETE FROM $selfTableName WHERE $selfPrimaryKey = ?", $this->{$selfPrimaryKey});
 	}
 	
+    // TODO: decide if this is being used. If not, deprecate or delete.
 	public static function columns()
 	{
 		$selfName = get_called_class();
 		$tableName = $selfName::$tableName;
 		$model = new $selfName(null);
-		$_columns = $model->columns;
+		$_columns = $selfName::$columns;
 		$model = null;
 		
 		$columns = array();
@@ -728,31 +767,36 @@ abstract class Model extends \ArrayObject
 		
 		return array_keys($columns);
 	}
-	
+	    
     /**
      * Converts '$value' into a safe database value for the column we're about to insert the data into.
-     * @param   string  $columnName     The key to get the type of column from '$this->columns'.
+     * @param   string  $columnName     The key to get the type of column from 'self::$columns'.
      * @param   mixed   $value          The value to be converted.
      * @return  mixed                   The value converted to the type of column declared.
      */
-    protected function getDatabaseValue($columnName, $value)
+    protected static function getColumnValue($columnName, $value, $toDatabase = true)
     {
-        $columns = $this->columns;
+        $selfClass = get_called_class();
+        $columns = $selfClass::$columns;
         
         if (array_key_exists($columnName, $columns)) {
             $columnType = $columns[$columnName];
             
             switch ($columnType) {
-                case 'string':
+                case self::COLUMN_STRING:
                     $value = strval($value);
                     break;
-                case 'integer':
+                case self::COLUMN_INTEGER:
                     $value = intval($value);
                     break;
-                case 'boolean':
-                    $value = boolval($value) ? 1 : 0;
+                case self::COLUMN_BOOLEAN:
+                    $value = boolval($value);
+                    
+                    if ($toDatabase) {
+                        $value = $value ? 1 : 0;
+                    }
                     break;
-                case 'date':
+                case self::COLUMN_DATE:
                     // TODO: convert possible date format into UTC timestamp.
                     break;
                 default:
@@ -761,6 +805,68 @@ abstract class Model extends \ArrayObject
         }
         
         return $value;
+    }
+    
+    /**
+     * Returns the relationship of the key '$relationshipName' declared in the calling model class.
+     * If 'inverse' has been set within the found relationship, an inverted relationship produced from the opposing model and returned. 
+     * @param       string      $relationshipName       The name of the relationship to return.
+     * @return      array                               The found relationship or an inverted relationship. 'null' is returned if no relationship is found.
+     */
+    protected static function getRelationship($relationshipName)
+    {
+        $selfClass = get_called_class();
+        $relationships = $selfClass::$relationships;
+        
+        if (isset($relationships[$relationshipName])) {
+            $relationship = $relationships[$relationshipName];
+            
+            // if 'inverse' is set, calculate relationship based on other model's declaration.
+            if (isset($relationship['inverse'])) {
+                $modelClass = ClassResolver::resolve($relationship['model']);
+                $modelRelationships = $modelClass::$relationships;
+                $modelRelationship = $modelRelationships[$relationship['inverse']];
+                
+                $relationship = [
+                    'column' => isset($modelRelationship['joinColumn']) ? $modelRelationship['joinColumn'] : $modelRelationship['column'],
+                    'joinColumn' => $modelRelationship['column'],
+                    'model' => $relationship['model'],
+                    'relationship' => $selfClass::getReverseRelationship($modelRelationship['relationship'])
+                ];
+            }
+            
+            if (!isset($relationship['joinColumn'])) {
+                $relationship['joinColumn'] = $relationship['column'];
+            }
+            
+            return $relationship;
+        }
+        
+        return null;
+    }
+    
+    /**
+     * The opposite value of '$relationship' is returned.
+     * @param       integer     $relationship       The relationship value to reverse.
+     * @return      integer                         The reverse relationship value.
+     */
+    protected static function getReverseRelationship($relationship)
+    {
+        switch ($relationship) {
+            case self::RELATIONSHIP_MANY_TO_ONE:
+                $relationship = self::RELATIONSHIP_ONE_TO_MANY;
+            case self::RELATIONSHIP_ONE_TO_MANY:
+                $relationship = self::RELATIONSHIP_MANY_TO_ONE;
+                break;
+            case self::RELATIONSHIP_MANY_TO_MANY:
+                // no break.
+            case self::RELATIONSHIP_ONE_TO_ONE:
+                // no break.
+            default:
+                break;
+        }
+        
+        return $relationship;
     }
     
 	private function debug($method)

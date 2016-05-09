@@ -2,6 +2,8 @@
 
 namespace PHPMVC\Foundation\Model;
 
+use \PHPMVC\Foundation\Model\ClassResolver;
+
 final class ModelPredicate
 {
 	public $arguments = null;
@@ -27,7 +29,7 @@ final class ModelPredicate
         $this->classes = array_merge($this->classes, $classes);
     }
     
-    public function getFormattedQuery($test=false)
+    public function getFormattedQuery()
     {
         $str = $this->str;
         
@@ -36,11 +38,11 @@ final class ModelPredicate
 			for ($i = 0; $i < count($strComponents); $i++) {
 				$strComponent = $strComponents[$i];
                 
-                preg_match_all('/(?!$::)(\w+)\.(\w+)/', $strComponent, $matches);
+                preg_match_all('/(?!$::)([A-Za-z0-9_:]+)\.(\w+)/', $strComponent, $matches);
                 $matches = array_slice($matches, 1);
                 
                 if (count($matches) === 2 && !empty($matches[0])) {
-                    $modelName = $matches[0][0];
+                    $modelName = ClassResolver::resolve($matches[0][0]);
                     $columnName = $matches[1][0];
                                         
                     // set class with full path if added to classes.
@@ -50,12 +52,6 @@ final class ModelPredicate
                     
 					$strComponents[$i] = $modelName::$tableName . ".$columnName";
 				}
-                
-                else if ($test && $i > 0) {
-                    var_dump($strComponent);
-                    var_dump($matches);
-                    die();
-                }
 			}
             
 			$str = implode(' ', $strComponents);

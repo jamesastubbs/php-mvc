@@ -91,12 +91,8 @@ class Application
 		$logFileContents = file_get_contents($logFile);
 		
 		$backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-		$backtraceStr = "";
-		
-		if (count($backtrace) > $backtraceLevel) {
-			$backtraceStr = "{$backtrace[$backtraceLevel]['file']} on line {$backtrace[$backtraceLevel]['line']}";
-		}
-		
+		$backtraceStr = json_encode($backtrace, JSON_PRETTY_PRINT);
+        
 		$logFileContents .= '(' . date('Y-m-d H:i:s') . ") (Client: {$_SERVER['REMOTE_ADDR']}) ($backtraceStr) $logText\n";
 		file_put_contents($logFile, $logFileContents);
 	}

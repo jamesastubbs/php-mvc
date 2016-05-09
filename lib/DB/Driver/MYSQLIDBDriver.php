@@ -29,7 +29,7 @@ class MYSQLIDBDriver extends DBDriver
 		$query = $this->connection->prepare($statement);
 
 		if (!$query) {			
-			Application::log("MySQLi error: " . $this->connection->error . " - query: " . $this->debugQuery($statement, $values), 2);
+			Application::log("MySQLi error: " . $this->connection->error . " - query: " . $this->debugQuery($statement, $values));
 			
             /*
 			if (filter_var(Application::getConfigValue('DEBUG'), FILTER_VALIDATE_BOOLEAN)) {
@@ -56,7 +56,7 @@ class MYSQLIDBDriver extends DBDriver
 			$_values = array();
 			
 			for ($i = 0; $i < count($values); $i++) {
-				if ($values[$i] == null)
+				if ($values[$i] === null)
 					continue;
 				else {
 					$value = $values[$i];
@@ -75,7 +75,6 @@ class MYSQLIDBDriver extends DBDriver
 				$_values[$i] = &$values[$i];
 			}
             
-			//die(var_dump($_values));
 			call_user_func_array(array($query, "bind_param"), array_merge(array($bindTypes), $_values));
 		}
 		
