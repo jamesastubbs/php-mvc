@@ -78,7 +78,7 @@ abstract class Model extends \ArrayObject
     {
         $selfClass = get_class($this);
         $relatingModelClass = ClassResolver::resolve($relatingModelClassName, $relatingModelName);
-                
+        
         $relatingModelPrimaryKey = $relatingModelClass::$primaryKey;
         $relatingModel = new $relatingModelClass();
         $modelIsThisClass = ($relatingModelClass === $selfClass);
@@ -89,7 +89,8 @@ abstract class Model extends \ArrayObject
             $relatingModelPrimaryKeyValue = "{$this->{"$relatingModelName.$relatingModelPrimaryKey"}}";
         }
         
-        if (array_key_exists($relatingModelName, self::$_cachedModels) && array_key_exists($relatingModelPrimaryKeyValue, self::$_cachedModels[$relatingModelClass])) {
+        if (isset(self::$_cachedModels[$relatingModelClass]) && isset(self::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue])) {
+            // if relating model has already been set up and stored, return the cached value.
             return self::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue];
         }
         
@@ -113,23 +114,32 @@ abstract class Model extends \ArrayObject
     
     final private static function mapModelRelationships($parentModel, $childModel, $joinDefinition)
     {
-        $parentModelName = get_class($parentModel);
+        $parentModelClass = get_class($parentModel);
         $childModelName = get_class($childModel);
-        $parentModelKey = lcfirst($parentModelName);
-        $childModelKey = lcfirst($childModelName);
+        preg_match_all('/^([A-Za-z0-9_]+)\\\Model\\\([A-Za-z0-9_]+)$/', $childModelName, $childModelMatches);
+        array_shift($childModelMatches);
+        $childModelName = $childModelMatches[0][0] . ':' . $childModelMatches[1][0];
+        
+        $relationshipProperty = lcfirst($childModelMatches[1][0]);
         
         $joinDefinition['method'] = 'guess';
-        $relationships = $parentModelName::$relationships;
+        $relationships = $parentModelClass::$relationships;
         
         foreach ($relationships as $relationshipName => $relationship) {
             // if relationship is defined in class, we'll go by that definition.
             if ($relationship['model'] === $childModelName) {
+                // change join method, so that we don't guess the relationship name.
                 $joinDefinition['method'] = $relationship['relationship'];
+                
                 $joinDefinition['property_key'] = $relationshipName;
                 $joinDefinition['primary_key'] = $relationship['column'];
                 
                 // set the foreign key as the same column name of the primary key, if the key 'joinColumn' doesn't exist.
                 $joinDefinition['foreign_key'] = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $relationship['column'];
+                
+                // store the relationship name as we'll use this as the property name to store the relationship array.
+                $relationshipProperty = $relationshipName;
+                
                 break;
             }
         }
@@ -149,9 +159,10 @@ abstract class Model extends \ArrayObject
             }
         } else {
             $add = true;
+            $childModelKey = lcfirst($childModelMatches[1][0]);
             
-            if (property_exists($parentModel, $childModelKey)) {
-                $storedChildModel = $parentModel->{$childModelKey};
+            if (property_exists($parentModel, $relationshipProperty)) {
+                $storedChildModel = $parentModel->{$relationshipProperty};
                 
                 if ($storedChildModel === $childModel) {
                     $add = false;
@@ -162,12 +173,12 @@ abstract class Model extends \ArrayObject
             }
             
             if ($add) {
-                if (property_exists($parentModel, $childModelKey . 's')) {
-                    if (!in_array($childModel, $parentModel->{$childModelKey. 's'})) {
+                if (property_exists($parentModel, $relationshipProperty . 's')) {
+                    if (!in_array($childModel, $parentModel->{$relationshipProperty. 's'})) {
                         array_push($parentModel->{$childModelKey. 's'}, $childModel);
                     }
                 } else {
-                    $parentModel->{$childModelKey} = $childModel;
+                    $parentModel->{$relationshipProperty} = $childModel;
                 }
             }
         }
@@ -697,7 +708,7 @@ abstract class Model extends \ArrayObject
         }
         
 		$this->_tmp = null;
-		
+        
 		return $fetchedObjects;
 	}
 	

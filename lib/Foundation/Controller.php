@@ -12,6 +12,12 @@ use PHPMVC\Foundation\Application;
 
 abstract class Controller
 {
+    const USRLOGIN_OK = 0;
+    const USRLOGIN_LOGGED_IN = 1;
+    const USRLOGIN_INVALID_CRED = 2;
+    const USRLOGIN_INVALID_STATUS = 3;
+    const USRLOGIN_ERROR = 4;
+    
     public $title = null;
     protected $globalViewDataOn = true;
     protected $loginCheck = false;
@@ -44,6 +50,56 @@ abstract class Controller
     protected function globalViewData()
     {
         return null;
+    }
+    
+    /**
+     * Attempts a login with '$username' and '$password'.
+     * The controller fetches the user with the username of '$username'.
+     * If retrieved, the password is checked.
+     * A status representing the success or type of error occured when logging in is returned.
+     *
+     * @param   string      $username   Username of the user attempting to login.
+     * @param   string      $password   Password of the user attempting to login.
+     *
+     * @return  integer                 Status 
+     */
+    protected function loginUser($username, $password)
+    {
+        // user is already logged in,
+        // so don't continue.
+        if ($this->isLoggedIn()) {
+			return self::USRLOGIN_LOGGED_IN;
+		}
+        
+        // the selected user class must have the method below defined.
+        $userClass = self::$userClass;
+        $user = $userClass::findByLogin($username, $password);
+        
+        if ($user !== null) {
+            // the selected user class must have the method below defined.
+            if ($user->isOpen()) {
+                // set the session key.
+                // then store the key in the database under the user's record.
+                $userSessionKey = self::$userSessionKey;
+                $_SESSION[$userSessionKey] = uniqid($userSessionKey);
+                
+                $user->{$userSessionKey} = $_SESSION[$userSessionKey];
+                
+                if (!$user->update()) {
+                    // problem with updating the user's session key in the database.
+                    return self::USRLOGIN_ERROR;
+                }
+                
+                // username found and password matches.
+                return self::USRLOGIN_OK;
+            }
+            
+            // user found, but status is not open.
+            return self::USRLOGIN_INVALID_STATUS;
+        }
+        
+        // either user was not found and/or password did not match.
+        return self::USRLOGIN_INVALID_CRED;
     }
     
     protected function isLoggedIn()
@@ -85,37 +141,37 @@ abstract class Controller
 		exit(1);
 	}
 	
-	protected function view($view, $data = array())
+	protected function view($view, $data = [], $viewPath = null)
 	{
-		$this->viewFunction($view, $data, $this->viewTemplate);
-	}
-
-	protected function viewWithoutTemplate($view, $data = array())
-	{
-		$this->viewFunction($view, $data, false);
+		$this->viewFunction($view, $data, $this->viewTemplate, $viewPath);
 	}
     
-    protected function viewToString($view, $data = array())
-    {        
-        $outputStr = '';
-        $this->viewFunction($view, $data, $this->viewTemplate, $outputStr);
-        
-        return $outputStr;
-    }
+	protected function viewWithoutTemplate($view, $data = [], $viewPath = null)
+	{
+		$this->viewFunction($view, $data, false, $viewPath);
+	}
     
-    protected function viewWithoutTemplateToString($view, $data = array())
+    protected function viewToString($view, $data = [], $viewPath = null)
     {
         $outputStr = '';
-        $this->viewFunction($view, $data, false, $outputStr);
+        $this->viewFunction($view, $data, $this->viewTemplate, $outputStr, $viewPath);
         
         return $outputStr;
     }
     
-	protected function viewFunction($view, $data, $viewTemplate, &$outputStr = null)
+    protected function viewWithoutTemplateToString($view, $data = [], $viewPath = null)
+    {
+        $outputStr = '';
+        $this->viewFunction($view, $data, false, $outputStr, $viewPath);
+        
+        return $outputStr;
+    }
+    
+	protected function viewFunction($view, $data, $viewTemplate, &$outputStr = null, $viewPath = null)
 	{
 		if (!is_null($data)) {
             if ($viewTemplate) {
-			 $data['title'] = $this->title;
+                $data['title'] = $this->title;
             }
             
             if ($this->globalViewDataOn) {
@@ -131,27 +187,35 @@ abstract class Controller
             }
 		}
         
-        if (self::$rootDir === null) {
-            self::$rootDir = Application::getConfigValue('ROOT');
+        $selfClass = get_called_class();
+		$selfNameParts = explode('\\', $selfClass);
+        $selfName = array_pop($selfNameParts);
+        
+        // default prefix set as the namespace of the calling class.
+        if (strpos($view, ':') === false) {
+            $selfPrefix = array_shift($selfNameParts);
+            $view = $selfPrefix . ':' . $view;
         }
         
-		$selfNameParts = explode('\\', get_called_class());
-        $selfName = array_pop($selfNameParts);
-        $viewPath = self::$rootDir . '/application/View/' . explode('Controller', $selfName)[0] . "/$view.php";
-		
+        $viewParts = explode(':', $view);
+        $prefix = array_shift($viewParts);
+        $view = array_pop($viewParts);
+        
+        $viewPath = $this->getViewPath($prefix);
+        
         if (file_exists($viewPath)) {
             if ($outputStr !== null) {
                 ob_start();
             }
             
 			if ($viewTemplate) {
-                $this->viewHeader($data);
+                $this->viewHeader($prefix, $data);
             }
             
-            include $viewPath;
+            include realpath($viewPath . '/' . ucfirst(str_replace('Controller', '', $selfName)) . '/' . $view . '.php');
             
             if ($viewTemplate) {
-				$this->viewFooter($data);
+				$this->viewFooter($prefix, $data);
             }
             
             if ($outputStr !== null) {
@@ -162,17 +226,25 @@ abstract class Controller
         }
     }
     
-    protected function viewHeader($data)
+    protected function viewHeader($prefix, $data)
     {
-        if ($path = $this->getTemplatePath('header')) {
-            include $path . '/header.php';
+        $path = $this->getTemplatePath($prefix, 'header');
+        
+        if ($path !== null) {
+            $path = $path . '/header.php';
+            
+            include $path;
         }
     }
     
-    protected function viewFooter($data)
+    protected function viewFooter($prefix, $data)
     {
-        if ($path = $this->getTemplatePath('footer')) {
-            include $path . '/footer.php';
+        $path = $this->getTemplatePath($prefix, 'footer');
+        
+        if ($path !== null) {
+            $path = $path . '/footer.php';
+            
+            include $path;
         }
     }
     
@@ -223,23 +295,64 @@ abstract class Controller
 		$protocol = (isset($_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : 'HTTP/1.0');
 
 		$headerStr = "$errorCode $text";
-
+        
 		header("$protocol $headerStr");
 		$data = array('title' => 'Error', 'code' => $errorCode, 'message' => $text);
-		$templatePath = $this->getTemplatePath('error');
+		$templatePath = $this->getTemplatePath(null, 'error');
 		require_once $templatePath . '/header.php';
 		require_once $templatePath . '/error.php';
 		require_once $templatePath . '/footer.php';
 		exit(1);
 	}
 	
-	private function getTemplatePath($specificFile = null)
-	{       
-		$selfNameParts = explode('\\', get_called_class());
-        $selfName = explode('Controller', array_pop($selfNameParts))[0];
-        $templatePath = realpath(self::$rootDir . '/application/View');
+    private function getViewPath($prefix = null)
+    {
+        // get root directory from Application class.
+        if (self::$rootDir === null) {
+            self::$rootDir = Application::getConfigValue('ROOT');
+        }
+        
+        // get the autoloader to resolve 
+        global $loader;
+        $prefixes = array_merge($loader->getPrefixes(), $loader->getPrefixesPsr4());
+        
+        foreach ($prefixes as $name => $dir) {
+            $pos = strpos($name, '\\');
+            
+            if ($pos !== false) {
+                $newName = substr_replace($name, '', $pos, 1);
+                
+                $prefixes[$newName] = $dir;
+                unset($prefixes[$name]);
+            }
+        }
+                
+        // set the default prefix to the name of the hosting application.
+        if ($prefix === null) {
+            $prefix = Application::getConfigValue('NAME');
+        }
+        
+        // if prefix does not exist in the prefixes array,
+        // return a blank string as it will be impossible to determine the location of the view file without an explicit path being sent to here.
+        if (!isset($prefixes[$prefix])) {
+            return '';
+        }
+        
+        $prefixDir = $prefixes[$prefix][0];
+        
+        $viewPath = realpath($prefixDir . '/View');
+        
+        return $viewPath;
+    }
+    
+	private function getTemplatePath($prefix = null, $specificFile = null)
+	{
+        $templatePath = $this->getViewPath($prefix);
         
         if ($templatePath !== false) {
+            $selfNameParts = explode('\\', get_called_class());
+            $selfName = explode('Controller', array_pop($selfNameParts))[0];
+            
             $searchingPath = "/$selfName/_template";
             
             if ($specificFile !== null) {
@@ -248,7 +361,7 @@ abstract class Controller
                 $searchingPath .= '/header.php';
             }
             
-            if (file_exists("$templatePath/$searchingPath")) {
+            if (file_exists($templatePath . $searchingPath)) {
                 $templatePath .= "/$selfName/_template";
             } else {
                 $templatePath .= '/_template';

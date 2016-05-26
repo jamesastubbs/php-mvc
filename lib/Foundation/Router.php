@@ -6,6 +6,7 @@ class Router
 {
     private $name = null;
     private $routes = [];
+    private $baseRoutes = [];
     
     public function __construct($name, $routes)
     {
@@ -13,11 +14,21 @@ class Router
         
         if (is_array($routes)) {
             foreach ($routes as $routePath => $route) {
+                if (preg_match('/^@.+/', $route)) {
+                    switch (str_replace('@', '', $route)) {
+                        case 'default':
+                            $this->baseRoutes[] = explode(':', $routePath)[0];
+                            break;
+                        default:
+                            break;
+                    }
+                    
+                    continue;
+                }
+                
                 // start stripping apart route definition.
                 $routeParts = explode('::', $route);
                 $actionParts = explode('(', $routeParts[1]);
-                
-                $routeURL = '/^';
                 
                 // sanitise action string.
                 $actionPartsCount = count($actionParts);
@@ -33,35 +44,36 @@ class Router
                 $parameters = array_fill_keys($parameters[1], null);
                 $parameters['__order'] = [];
                 
-                preg_match_all('/\/{([A-Za-z0-9_]+(?:(?:\:[ |]\'[\s\S]+\')|))}/', $routePath, $parametersParts);
-                $parametersParts = $parametersParts[1];
+                // start building the route URL.
+                $routeURL = '/^';
                 
-                foreach ($parametersParts as $parametersPart) {
-                    preg_match_all('/^([A-Za-z0-9_]+)(?:\:[ |]\'([\s\S]+)\'|)$/', $parametersPart, $parts);
-                    array_shift($parts);
-                    $partsCount = count($parts);
-                    
-                    $parameterName = $parts[0][0];
-                    $parameterRegex = $parts[1][0] !== '' ? $parts[1][0] : '[A-Za-z0-9_]+';
-                    
-                    if (!array_key_exists($parameterName, $parameters)) {
-                        throw new \Exception('Invalid route.');
+                // retrieve all route parts, so that we can build continue to build the route URL.
+                preg_match_all('/\/[A-Za-z0-9_]+|\/\{[A-Za-z0-9_]+(?:(?:\:[ |]\'[\s\S]+\')|)\}/', $routePath, $routePathMatches);
+                $routePathMatches = $routePathMatches[0];
+                
+                foreach ($routePathMatches as $routePathMatch) {
+                    if (strpos($routePathMatch, '{') !== false) {
+                        // is a parameter.
+                        preg_match_all('/^\/\{([A-Za-z0-9_]+)(?:\:[ |]\'([\s\S]+)\'|)\}$/', $routePathMatch, $parts);
+                        array_shift($parts);
+                        
+                        $parameterName = $parts[0][0];
+                        $parameterRegex = $parts[1][0] !== '' ? $parts[1][0] : '([A-Za-z0-9_]+)';
+                        
+                        if (!array_key_exists($parameterName, $parameters)) {
+                            throw new \Exception('Invalid route.');
+                        }
+                        
+                        $parameters[$parameterName] = $parameterRegex;
+                        array_push($parameters['__order'], $parameterName);
+                        $routeURL .= '\/' . $parameterRegex;
+                    } else {
+                        // is a static part of the URL.
+                        $routeURL .= '\\' . $routePathMatch;
                     }
-                    
-                    $parameters[$parameterName] = $parameterRegex;
-                    array_push($parameters['__order'], $parameterName);
                 }
                 
-                foreach ($parameters as $parameterKey => $parameter) {
-                    if ($parameterKey === '__order') {
-                        continue;
-                    } else if ($parameter === null) {
-                        throw new \Exception('Invalid route.');
-                    }
-                    
-                    $routeURL .= "\/({$parameter})";
-                }
-                
+                // append GET parameter regex.
                 $routeURL .= '(?:(?:\?\S[^ \?]+)|)$/';
                 
                 $this->routes[$routeURL] = [
@@ -119,28 +131,36 @@ class Router
         
         // search for existing controller as last resort.
         if ($route === null) {
-            $controller = (isset($urlParts[0]) && $urlParts[0] !== '') ? $urlParts[0] : null;
-            $action = isset($urlParts[1]) ? $urlParts[1] : null;
+            $baseRoutes = array_merge([$this->name], $this->baseRoutes);
             
-            $urlPartsCount = count($urlParts);
-            $parameters = [];
-            
-            for($i = 2; $i < $urlPartsCount; $i++) {
-                array_push($parameters, $urlParts[$i]);
+            foreach ($baseRoutes as $baseRoute) {
+                $controller = (isset($urlParts[0]) && $urlParts[0] !== '') ? $urlParts[0] : null;
+                $action = isset($urlParts[1]) ? $urlParts[1] : null;
+                
+                $urlPartsCount = count($urlParts);
+                $parameters = [];
+                
+                for($i = 2; $i < $urlPartsCount; $i++) {
+                    array_push($parameters, $urlParts[$i]);
+                }
+                
+                if ($controller === null) {
+                    $controller = 'HomeController';
+                } else {
+                    $controller = ucfirst($controller) . 'Controller';
+                }
+                
+                if ($action === null) {
+                    $action = 'index';
+                }
+                
+                // setup controler class name so it is relative to the namespace.
+                $controller = $baseRoute . "\\Controller\\$controller";
+                
+                if (class_exists($controller)) {
+                    break;
+                }
             }
-                        
-            if ($controller === null) {
-                $controller = 'HomeController';
-            } else {
-                $controller = ucfirst($controller) . 'Controller';
-            }
-            
-            if ($action === null) {
-                $action = 'index';
-            }
-            
-            // setup controler class name so it is relative to the namespace.
-            $controller = $this->name . "\\Controller\\$controller";
         }
     }
 }

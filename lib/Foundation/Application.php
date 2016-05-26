@@ -64,6 +64,7 @@ class Application
 		// setup database connection if config is set.
         if (array_key_exists('DB_DRIVER', self::$config)) {
             $this->db = new DB(self::$config);
+            Controller::setDB($this->db);
             Model::setDB($this->db);
         }
         
