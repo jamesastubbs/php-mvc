@@ -29,34 +29,28 @@ final class ModelPredicate
         $this->classes = array_merge($this->classes, $classes);
     }
     
-    public function getFormattedQuery()
+    public function getFormattedQuery($test = null)
     {
-        $str = $this->str;
-        
-        if (preg_match('/\ /', $str)) {
-			$strComponents = explode(' ', $str);
-			for ($i = 0; $i < count($strComponents); $i++) {
-				$strComponent = $strComponents[$i];
-                
-                preg_match_all('/(?!$::)([A-Za-z0-9_:]+)\.(\w+)/', $strComponent, $matches);
-                $matches = array_slice($matches, 1);
-                
-                if (count($matches) === 2 && !empty($matches[0])) {
-                    $modelName = ClassResolver::resolve($matches[0][0]);
-                    $columnName = $matches[1][0];
-                                        
-                    // set class with full path if added to classes.
-                    if ($this->classes !== null && array_key_exists($modelName, $this->classes)) {
-                        $modelName = $this->classes[$modelName];
-                    }
-                    
-					$strComponents[$i] = $modelName::$tableName . ".$columnName";
-				}
-			}
+        $pattern = '/(?:\$::)((?:[A-Za-z0-9]+:)?[A-Za-z0-9]+)(?:(?:\ |$|.(?:([A-Za-z0-9_]+))?))/';
+        $str = preg_replace_callback($pattern, function ($matches) use ($test) {
+            $matchStr = '';
+            $matches = array_slice($matches, 1);
+            $matchesCount = count($matches);
             
-			$str = implode(' ', $strComponents);
-		}
-
+            if ($matchesCount !== 0) {
+                $modelName = $matches[0];
+                $columnName = isset($matches[1]) ? '.' . $matches[1] : ' ';
+                
+                if (strpos($modelName, ':') !== false) {
+                    $modelName = ClassResolver::resolve($modelName);
+                }
+                
+                $matchStr = $modelName::$tableName . $columnName;
+            }
+            
+            return $matchStr;
+        }, $this->str);
+        
         return $str;
     }
     
