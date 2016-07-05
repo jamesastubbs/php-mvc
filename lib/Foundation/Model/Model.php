@@ -50,6 +50,11 @@ abstract class Model extends \ArrayObject
         $selfClass = get_called_class();
     }
     
+    final protected static function getDB()
+    {
+        return self::$db;
+    }
+    
 	final protected function getTmp($key)
 	{
 		if (!isset($this->_tmp)) {
@@ -191,6 +196,14 @@ abstract class Model extends \ArrayObject
                 }
             }
         }
+    }
+    
+    public static function findAll()
+    {
+        $selfClass = get_called_class();
+        $models = $selfClass::select();
+        
+        return $models;
     }
     
     public static function findByID($id)
@@ -429,14 +442,26 @@ abstract class Model extends \ArrayObject
 		
 		return $model;
 	}
-	
+    
     /**
      * Automatically builds the join queries based on the relationships declared in the '$parentModel'.
      * @param   string      $parentModel
      * @return  Model
      */
+    /*
     public function innerJoinRelationships($parentModel = null)
     {
+        return $this->joinRelationships('inner', $parentModel);
+    }
+    
+    public function leftJoinRelationships($parentModel = null)
+    {
+        return $this->joinRelationships('left', $parentModel);
+    }
+    
+    protected function joinRelationships($joinMethod, $parentModel = null)
+    {
+        $joinMethod = $joinMethod . 'Join';
         $selfClass = get_class($this);
         $class = ClassResolver::resolve($parentModel === null ? $parentModel : $selfClass);
         $relationshipsNames = array_keys($class::$relationships);
@@ -444,7 +469,7 @@ abstract class Model extends \ArrayObject
         
         foreach ($relationshipsNames as $relationshipName) {
             $relationship = $class::getRelationship($relationshipName);
-            $model = $model->innerJoin($class, $relationship['model'])->on($relationship['joinColumn'], $relationship['column']);
+            $model = $model->{$joinMethod}($class, $relationship['model'])->on($relationship['joinColumn'], $relationship['column']);
         }
         
         return $this;
@@ -722,7 +747,8 @@ abstract class Model extends \ArrayObject
         
 		return $fetchedObjects;
 	}
-	
+	*/
+    
 	public function update()
 	{
 		$selfName = get_called_class();
@@ -876,6 +902,7 @@ abstract class Model extends \ArrayObject
      * @param       string      $relationshipName       The name of the relationship to return.
      * @return      array                               The found relationship or an inverted relationship. 'null' is returned if no relationship is found.
      */
+    /*
     protected static function getRelationship($relationshipName)
     {
         $selfClass = get_called_class();
@@ -907,6 +934,7 @@ abstract class Model extends \ArrayObject
         
         return null;
     }
+    */
     
     /**
      * The opposite value of '$relationship' is returned.
@@ -915,29 +943,90 @@ abstract class Model extends \ArrayObject
      *
      * @return      array                           The reverse relationship value.
      */
-    protected static function getReverseRelationship(array $relationship)
+    public static function getReverseRelationship(array $relationship)
     {
-        $reverseRelationship = $relationship;
+        $inversingRelationship = null;
+        $mappedRelationship = null;
         
-        if (isset($reverseRelationship['inverse']) && isset($reverseRelationship['model'])) {
-            $model = ClassResolver::resolve($reverseRelationship['model']);
-            
-            if (!class_exists($model)) {
-                throw new \Exception("The class '{$reverseRelationship['model']}' does not exist.");
-            }
-            
-            $relationshipName = $reverseRelationship['inverse'];
-            $modelRelationships = $model::$relationships;
-            
-            if (!isset($modelRelationships[$relationshipName])) {
-                throw new \Exception("Relationship '$relationshipName' doesn't exist in the Model '$model'");
-            }
-            
-            $relationship = $modelRelationships[$relationshipName];
-            
-            $reverseRelationship['column'] = $relationship['column'];
-            $reverseRelationship['relationship'] = self::getReverseRelationshipType($relationship['relationship']);
+        $model = ClassResolver::resolve($relationship['model']);
+        
+        if (!class_exists($model)) {
+            throw new \Exception("The class '$model' which has been resolved from '{$relationship['model']}' does not exist.");
         }
+        
+        $reverseKey = null;
+        
+        if (isset($relationship['inverse'])) {
+            $reverseKey = 'inverse';
+        } else if (isset($relationship['mappedBy'])) {
+            $reverseKey = 'mappedBy';
+        } else {
+            // TODO: create better exception messages to reveal the problematic relationship.
+            throw new \Exception('Relationship has not been configured for reversing.');
+        }
+        
+        $relationshipName = $relationship[$reverseKey];
+        $modelRelationships = $model::$relationships;
+        
+        if (!isset($modelRelationships[$relationshipName])) {
+            throw new \Exception("Relationship '$relationshipName' doesn't exist in the Model '$model'.");
+        }
+        
+        $inversingRelationship = $reverseKey === 'inverse' ? $modelRelationships[$relationshipName] : $relationship;
+        $mappedRelationship = $reverseKey === 'inverse' ? $relationship : $modelRelationships[$relationshipName];
+        
+        // check to see if mapped relationship has all properties set.
+        if (!(isset($mappedRelationship['column']) && isset($mappedRelationship['model']) && isset($mappedRelationship['inverse']) && isset($mappedRelationship['relationship']))) {
+            $missing = [];
+            
+            if (!isset($mappedRelationship['column'])) { $missing[] = 'column'; }
+            if (!isset($mappedRelationship['model'])) { $missing[] = 'model'; }
+            if (!isset($mappedRelationship['inverse'])) { $missing[] = 'inverse'; }
+            if (!isset($mappedRelationship['relationship'])) { $missing[] = 'relationship'; }
+            
+            throw new \Exception('Mapped relationship has not been configured for reversing. Missing properties: [\'' . implode('\', \'', $missing) . '\'].');
+        }
+        
+        // check to see if inversing relationship has all properties set.
+        if (!(isset($inversingRelationship['model']) && isset($inversingRelationship['mappedBy']))) {
+            $missing = [];
+            
+            if (!isset($inversingRelationship['model'])) { $missing[] = 'model'; }
+            if (!isset($inversingRelationship['mappedBy'])) { $missing[] = 'mappedBy'; }
+            
+            throw new \Exception("Relationship '$relationshipName' has not been configured for reversing. Missing properties: [' " . implode('\', \'', $missing) . "'].");
+        }
+        
+        $column = $mappedRelationship['column'];
+        $joinColumn = $column;
+        $model = $reverseKey === 'inverse' ? $inversingRelationship['model'] : $mappedRelationship['model'];
+        
+        $relationshipType = $reverseKey === 'inverse' ? self::getReverseRelationshipType($mappedRelationship['relationship']) : $mappedRelationship['relationship'];
+        
+        if ($relationshipType === $mappedRelationship['relationship']) {
+            //die(__FILE__ . ':' . __LINE__);
+        } else if (isset($relationship['mappedBy']) && $relationship['mappedBy'] === 'entries') {
+            /*
+            var_dump($reverseKey);
+            var_dump($mappedRelationship['relationship']);
+            var_dump($relationship);
+            var_dump($relationshipType);
+            die(__FILE__ . ':' . __LINE__);
+            */
+        }
+        
+        if (isset($mappedRelationship['joinColumn'])) {
+            // swap the columns as we're still reversing the relationship.
+            $joinColumn = $column;
+            $column = $mappedRelationship['joinColumn'];
+        }
+        
+        $reverseRelationship = array_merge($relationship, []);
+        
+        $reverseRelationship['column'] = $column;
+        $reverseRelationship['joinColumn'] = $joinColumn;
+        $reverseRelationship['model'] = $model;
+        $reverseRelationship['relationship'] = $relationshipType;
         
         return $reverseRelationship;
     }
@@ -966,6 +1055,28 @@ abstract class Model extends \ArrayObject
         }
         
         return $relationshipType;
+    }
+    
+    public static function getRelationship($relationshipName)
+    {
+        $selfClass = get_called_class();
+        
+        if (!isset($selfClass::$relationships[$relationshipName])) {
+            throw new \Exception("Relationship '$relationshipName' not found in model '$selfClass'.");
+        }
+        
+        $relationship = $selfClass::$relationships[$relationshipName];
+        
+        if (isset($relationship['mappedBy']) && (!isset($relationship['column']) || !isset($relationship['relationship']))) {
+            $reverseModel = ClassResolver::resolve($relationship['model']);
+            $reverseRelationship = $reverseModel::getRelationship($relationship['mappedBy']);
+            
+            $relationship['column'] = isset($reverseRelationship['joinColumn']) ? $reverseRelationship['joinColumn'] : $reverseRelationship['column'];
+            $relationship['joinColumn'] = $reverseRelationship['column'];
+            $relationship['relationship'] = self::getReverseRelationshipType($reverseRelationship['relationship']);
+        }
+        
+        return $relationship;
     }
     
 	private function debug($method)

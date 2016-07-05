@@ -10,6 +10,7 @@ namespace PHPMVC\Foundation;
 
 use PHPMVC\DB\DB;
 use PHPMVC\Foundation\Model\Model;
+use PHPMVC\Foundation\Model\ModelQueryBuilder;
 use PHPMVC\Foundation\Router;
 
 class Application
@@ -66,6 +67,7 @@ class Application
             $this->db = new DB(self::$config);
             Controller::setDB($this->db);
             Model::setDB($this->db);
+            ModelQueryBuilder::setDB($this->db);
         }
         
         $reflection = new \ReflectionMethod($this->controller, $this->action);
@@ -154,8 +156,9 @@ class Application
 	public function __deconstruct()
 	{
 		$this->db = null;
-        Model::setDB(null);
         Controller::setDB(null);
         Controller::setUserClass(null, null);
+        Model::setDB(null);
+        ModelQueryBuilder::setDB(null);
 	}
 }
