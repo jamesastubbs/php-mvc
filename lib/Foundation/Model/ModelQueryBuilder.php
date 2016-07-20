@@ -15,19 +15,24 @@ class ModelQueryBuilder
     const RELATIONSHIP_ATTRIBUTE_KEY = 'relationshipAttribute';
     
     private $aliases = [];
-    private $columns = [];
     private $joins = [];
     private $selectAlias = null;
-    private $whereArguments = [];
+    private $selectColumns = null;
+    private $selectModel = null;
     private $whereExpr = null;
     protected static $db = null;
+    public $whereArguments = [];
     
-    public function __construct($model, $alias)
+    public function __construct($data, $isModel)
     {
-        $this->selectAlias = $alias;
-        $model = ClassResolver::resolve($model);
-        
-        $this->setAlias($alias, $model);
+        if ($isModel) {
+            $this->from(
+                $data['model'],
+                $data['alias']
+            );
+        } else {
+            $this->selectColumns = $data['columns'];
+        }
     }
     
     final public static function setDB($db)
@@ -40,12 +45,34 @@ class ModelQueryBuilder
         return self::$db;
     }
     
-    public static function select($model, $alias)
+    public static function select($modelOrColumns, $alias = null)
     {
         $selfClass = __CLASS__;
-        $queryBuilder = new $selfClass($model, $alias);
+        $isModel = $alias !== null;
+        
+        $data = $isModel ? [
+            'alias' => $alias,
+            'model' => $modelOrColumns
+        ] : [
+            'columns' => $modelOrColumns
+        ];
+        
+        $queryBuilder = new $selfClass($data, $isModel);
         
         return $queryBuilder;
+    }
+    
+    public function from($model, $alias)
+    {
+        if ($this->selectAlias !== null) {
+            throw new \Exception('The select alias has already been set.');
+        }
+        
+        $this->selectAlias = $alias;
+        $this->selectModel = ClassResolver::resolve($model);
+        $this->setAlias($alias, $this->selectModel);
+        
+        return $this;
     }
     
     public function innerJoin($attribute, $alias, $onExpr = null)
@@ -113,6 +140,7 @@ class ModelQueryBuilder
     {
         $aliases = $this->aliases;
         $aliasesCount = count($aliases);
+        $columns = [];
         
         if (empty($aliases)) {
             throw new \Exception('No model selected.');
@@ -121,7 +149,26 @@ class ModelQueryBuilder
         $selectAlias = $this->selectAlias;
         $selectModel = $this->getAlias($selectAlias);
         $selectTable = $selectModel::$tableName;
-        $this->addColumnsFromAlias($selectAlias);
+        $usesColumns = $this->selectColumns !== null;
+        
+        if ($usesColumns) {
+            preg_match_all('/[A-Za-z0-9_]+\.[A-Za-z0-9_]+/', $this->selectColumns, $matchedColumns);
+            $matchedColumns = $matchedColumns[0];
+            
+            foreach ($matchedColumns as $matchedColumn) {
+                if (strpos($matchedColumn, '.') === false) {
+                    throw new \Exception("Unsupported column: '$matchedColumn'.");
+                }
+                
+                $columnParts = explode('.', $matchedColumn);
+                $alias = $columnParts[0];
+                $column = $columnParts[1];
+                
+                $this->addColumn($column, $alias, $columns);
+            }
+        } else {
+            $this->addColumnsFromAlias($selectAlias, $columns);
+        }
         
         $sql = "FROM $selectTable AS $selectAlias";
         
@@ -133,13 +180,15 @@ class ModelQueryBuilder
             $modelTable = $model::$tableName;
             $onExpr = $join[self::ON_EXPR_KEY];
             
-            // add the columns in the SELECT clause.
-            $this->addColumnsFromAlias($alias);
+            if (!$usesColumns) {
+                // add the columns in the SELECT clause.
+                $this->addColumnsFromAlias($alias, $columns);
+            }
             
             $sql .= " $method JOIN $modelTable AS `$alias` ON $onExpr";
         }
         
-        $sql = 'SELECT ' . implode(', ', $this->columns) . ' ' . $sql;
+        $sql = 'SELECT ' . implode(', ', $columns) . ' ' . $sql;
         
         if ($this->whereExpr !== null) {
             $sql .= ' WHERE ' . $this->whereExpr;
@@ -177,33 +226,41 @@ class ModelQueryBuilder
                 foreach ($aliases as $alias => $modelClass) {
                     $columns = $modelClass::$columns;
                     $primaryKey = $modelClass::$primaryKey;
-                    $primaryValue = $fetchedRow["{$alias}_{$primaryKey}"] . '';
-                    $model = new $modelClass();
+                    $fetchedRowKey = "{$alias}_{$primaryKey}";
                     
-                    // if the model with the current primary key value already exists in the cache,
-                    // skip this and continue on with the loop.
-                    if (isset($cache[$alias][$primaryValue])) {
-                        continue;
-                    }
-                    
-                    // iterate through each model's columns.
-                    // populating the model's values from the current '$fetchedRow' by using the column name as the key.
-                    foreach ($columns as $column => $columnType) {
-                        $value = $fetchedRow["{$alias}_{$column}"];
-                        $model->{$column} = $value;
+                    if (array_key_exists($fetchedRowKey, $fetchedRow)) {
+                        $primaryValue = $fetchedRow[$fetchedRowKey] . '';
+                        $model = new $modelClass();
                         
-                        if ($column !== $primaryKey) {
-                            $model->{"__old_$column"} = $value;
+                        // if the model with the current primary key value already exists in the cache,
+                        // skip this and continue on with the loop.
+                        if (isset($cache[$alias][$primaryValue])) {
+                            continue;
                         }
+                        
+                        // iterate through each model's columns.
+                        // populating the model's values from the current '$fetchedRow' by using the column name as the key.
+                        foreach ($columns as $column => $columnType) {
+                            $key = "{$alias}_{$column}";
+                            
+                            if (array_key_exists($key, $fetchedRow)) {
+                                $value = $fetchedRow[$key];
+                                $model->{$column} = $value;
+                                
+                                if ($column !== $primaryKey) {
+                                    $model->{"__old_$column"} = $value;
+                                }
+                            }
+                        }
+                        
+                        // populate an array for this model alias.
+                        if (!isset($cache[$alias])) {
+                            $cache[$alias] = [];
+                        }
+                        
+                        // store the model in the cache as it is new.
+                        $cache[$alias][$primaryValue] = $model;
                     }
-                    
-                    // populate an array for this model alias.
-                    if (!isset($cache[$alias])) {
-                        $cache[$alias] = [];
-                    }
-                    
-                    // store the model in the cache as it is new.
-                    $cache[$alias][$primaryValue] = $model;
                 }
             }
             
@@ -213,38 +270,30 @@ class ModelQueryBuilder
                     $alias = $join[self::ALIAS_KEY];
                     $joinAlias = $join[self::JOIN_ALIAS_KEY];
                     
-                    if (!isset($cache[$alias])) {
-                        throw new \Exception("Cannot process alias '$alias' as it has not been found.");
-                    }
-                    
-                    if (!isset($cache[$joinAlias])) {
-                        throw new \Exception("Cannot process alias '$joinAlias' as it has not been found.");
-                    }
-                    
-                    // get the cached models.
-                    $models = $cache[$alias];
-                    $joinModels = $cache[$joinAlias];
-                    
-                    $relationship = $join[self::RELATIONSHIP_KEY];
-                    $relationshipAttribute = $join[self::RELATIONSHIP_ATTRIBUTE_KEY];
-                    //$relationshipModel = ClassResolver::resolve($relationship['model']);
-                    //$relationship = $relationshipModel::$relationship[$relationship]
-                    
-                    // TODO: remove second parameter.
-                    $reverseRelationship = Model::getReverseRelationship($relationship);
-                    $reverseRelationshipAttribute = isset($relationship['inverse']) ? $relationship['inverse'] : $relationship['mappedBy'];
-                    
-                    $column = $relationship['column'];
-                    $joinColumn = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $column;
-                    
-                    foreach ($models as &$model) {
-                        $columnValue = $model->{$column};
+                    if (isset($cache[$alias]) && isset($cache[$joinAlias])) {
+                        // get the cached models.
+                        $models = $cache[$alias];
+                        $joinModels = $cache[$joinAlias];
                         
-                        foreach ($joinModels as &$joinModel) {
-                            $joinColumnValue = $joinModel->{$joinColumn};
+                        $relationship = $join[self::RELATIONSHIP_KEY];
+                        $relationshipAttribute = $join[self::RELATIONSHIP_ATTRIBUTE_KEY];
+                        
+                        // TODO: remove second parameter.
+                        $reverseRelationship = Model::getReverseRelationship($relationship);
+                        $reverseRelationshipAttribute = isset($relationship['inverse']) ? $relationship['inverse'] : $relationship['mappedBy'];
+                        
+                        $column = $relationship['column'];
+                        $joinColumn = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $column;
+                        
+                        foreach ($models as &$model) {
+                            $columnValue = $model->{$column};
                             
-                            if ($columnValue === $joinColumnValue) {
-                                $this->addModelFromRelationship($model, $joinModel, $relationship, $relationshipAttribute, $reverseRelationship, $reverseRelationshipAttribute);
+                            foreach ($joinModels as &$joinModel) {
+                                $joinColumnValue = $joinModel->{$joinColumn};
+                                
+                                if ($columnValue === $joinColumnValue) {
+                                    $this->addModelFromRelationship($model, $joinModel, $relationship, $relationshipAttribute, $reverseRelationship, $reverseRelationshipAttribute);
+                                }
                             }
                         }
                     }
@@ -294,21 +343,26 @@ class ModelQueryBuilder
             }
         } else if (!$toMany) {
             if (isset($model->{$attribute}) && $model->{$attribute} !== $joinModel) {
-                //throw new \Exception("The attribute '$attribute' has already been set in the model " . get_class($model) . ".'");
+                throw new \Exception("The attribute '$attribute' has already been set in the model " . get_class($model) . ".'");
             }
             
             $model->{$attribute} = $joinModel;
         }
     }
     
-    private function addColumnsFromAlias($alias)
+    private function addColumnsFromAlias($alias, &$columns)
     {
         $model = $this->getAlias($alias);
         $modelColumns = array_keys($model::$columns);
         
         foreach ($modelColumns as $modelColumn) {            
-            $this->columns[] = "$alias.$modelColumn AS {$alias}_{$modelColumn}";
+            $this->addColumn($modelColumn, $alias, $columns);
         }
+    }
+    
+    private function addColumn($column, $alias, &$columns)
+    {
+        $columns[] = "$alias.$column AS {$alias}_{$column}";
     }
     
     private function getAlias($alias)

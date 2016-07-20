@@ -96,7 +96,6 @@ class Router
         foreach ($routesKeys as $routeKey) {
             if (preg_match_all($routeKey, $url, $urlMatches)) {
                 $route = $this->routes[$routeKey];
-                array_shift($urlMatches);
                 break;
             }
         }
@@ -117,8 +116,8 @@ class Router
                     $urlMatch = $urlMatches[$i][0];
                     $routeParameter = $routeParameters[$routeParameterName];
                     
-                    if (preg_match("/$routeParameter/", $urlMatch)) {
-                        array_push($parameters, $urlMatch);
+                    if (preg_match("/$routeParameter/", $urlMatch, $parameterMatches)) {
+                        $parameters[] = $parameterMatches[0];
                     }
                 }
                 

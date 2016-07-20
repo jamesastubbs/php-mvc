@@ -28,8 +28,8 @@ class MYSQLIDBDriver extends DBDriver
 	{        
 		$query = $this->connection->prepare($statement);
 
-		if (!$query) {			
-			Application::log("MySQLi error: " . $this->connection->error . " - query: " . $this->debugQuery($statement, $values));
+		if (!$query) {
+            Application::log("MySQLi error: " . $this->connection->error . " - query: " . $this->debugQuery($statement, $values));
 			
             /*
 			if (filter_var(Application::getConfigValue('DEBUG'), FILTER_VALIDATE_BOOLEAN)) {
@@ -100,13 +100,7 @@ class MYSQLIDBDriver extends DBDriver
 			Application::log("MySQLi error: " . $query->error . " - query: " . $this->debugQuery($statement, $values), 2);
 			
 			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN)) {
-				$backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-				$backtraceStr = "";
-				
-				if (count($backtrace) > 1)
-					$backtraceStr = $backtrace[1]['file'] . " on line " . $backtrace[1]['line'];
-				
-				die("<strong>MySQLi Error:</strong> " . $query->error . "<br />" . PHP_EOL . "<br />" . PHP_EOL . "<strong>Backtrace</strong>: $backtraceStr<br />" . PHP_EOL . "<strong>Query:</strong> " . $this->debugQuery($statement, $values));
+				throw new \Exception('MySQLi Error: ' . $query->error . ' | Query: '. $this->debugQuery($statement, $values));
 			}
 			
 			return false;

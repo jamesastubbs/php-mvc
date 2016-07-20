@@ -821,32 +821,55 @@ abstract class Model extends \ArrayObject
         $data = [];
         
         $selfClass = get_class($this);
-        if ($callingClass === null) {
-            $callingClass = $selfClass;
-        }
+        
+        $callingClass = $callingClass ?: $selfClass;
         $columns = array_keys($selfClass::$columns);
-        $relationships = $selfClass::$relationships;
+        $relationshipNames = array_keys($selfClass::$relationships);
         
         foreach ($columns as $column) {
             $data[$column] = $this->{$column};
         }
         
-        foreach ($relationships as $relationshipName => $relationship) {
-            if ($relationship['relationship'] === self::RELATIONSHIP_ONE_TO_MANY || $relationship['relationship'] === self::RELATIONSHIP_MANY_TO_MANY) {
-                $childData = [];
-                $childModels = $this->{$relationshipName};
-                
-                foreach ($childModels as $childModel) {
-                    if ($callingClass === get_class($childModel)) {
-                        continue;
+        foreach ($relationshipNames as $relationshipName) {
+            $relationship = $selfClass::getRelationship($relationshipName);
+            
+            if (isset($this->{$relationshipName})) {
+                if ($relationship['relationship'] === self::RELATIONSHIP_ONE_TO_MANY || $relationship['relationship'] === self::RELATIONSHIP_MANY_TO_MANY) {
+                    $childData = [];
+                    $childModels = $this->{$relationshipName};
+                    
+                    foreach ($childModels as $childModel) {
+                        if ($callingClass === get_class($childModel)) {
+                            continue;
+                        }
+                        
+                        $childData[] = $childModel->toJSON(true, $selfClass);
                     }
                     
-                    $childData[] = $childModel->toJSON($outputObjects, $callingClass);
+                    $data[$relationshipName] = $childData;
+                } else {
+                    if ($callingClass !== get_class($this->{$relationshipName})) {
+                        
+                        if (
+                            $callingClass === 'JStubbsCMS\Model\SectionLocation'
+                        ) {
+                            //var_dump($callingClass);
+                            //var_dump(get_class($this->{$relationshipName}));
+                            //die(__FILE__ . ':' . __LINE__);
+                        }
+                        /*
+                        var_dump($callingClass);
+                        var_dump(get_class($this->{$relationshipName}));
+                        
+                        $modelClass = get_class($this->{$relationshipName});
+                        $modelColumns = $modelClass::$columns;
+                        
+                        $data[$relationshipName] = $this->{$relationshipName};
+                        */
+                        
+                        $data[$relationshipName] = $this->{$relationshipName}->toJSON(true, $selfClass);
+                    }
                 }
-                
-                $data[$relationshipName] = $childData;
-            } else {
-                $data[$relationshipName] = $this->{$relationshipName};
             }
         }
         
@@ -966,14 +989,10 @@ abstract class Model extends \ArrayObject
         }
         
         $relationshipName = $relationship[$reverseKey];
-        $modelRelationships = $model::$relationships;
+        $reverseRelationship = $model::getRelationship($relationshipName);
         
-        if (!isset($modelRelationships[$relationshipName])) {
-            throw new \Exception("Relationship '$relationshipName' doesn't exist in the Model '$model'.");
-        }
-        
-        $inversingRelationship = $reverseKey === 'inverse' ? $modelRelationships[$relationshipName] : $relationship;
-        $mappedRelationship = $reverseKey === 'inverse' ? $relationship : $modelRelationships[$relationshipName];
+        $inversingRelationship = $reverseKey === 'inverse' ? $model::getRelationship($relationshipName) : $relationship;
+        $mappedRelationship = $reverseKey === 'inverse' ? $relationship : $model::getRelationship($relationshipName);
         
         // check to see if mapped relationship has all properties set.
         if (!(isset($mappedRelationship['column']) && isset($mappedRelationship['model']) && isset($mappedRelationship['inverse']) && isset($mappedRelationship['relationship']))) {
@@ -1003,18 +1022,6 @@ abstract class Model extends \ArrayObject
         
         $relationshipType = $reverseKey === 'inverse' ? self::getReverseRelationshipType($mappedRelationship['relationship']) : $mappedRelationship['relationship'];
         
-        if ($relationshipType === $mappedRelationship['relationship']) {
-            //die(__FILE__ . ':' . __LINE__);
-        } else if (isset($relationship['mappedBy']) && $relationship['mappedBy'] === 'entries') {
-            /*
-            var_dump($reverseKey);
-            var_dump($mappedRelationship['relationship']);
-            var_dump($relationship);
-            var_dump($relationshipType);
-            die(__FILE__ . ':' . __LINE__);
-            */
-        }
-        
         if (isset($mappedRelationship['joinColumn'])) {
             // swap the columns as we're still reversing the relationship.
             $joinColumn = $column;
@@ -1043,6 +1050,7 @@ abstract class Model extends \ArrayObject
         switch ($relationshipType) {
             case self::RELATIONSHIP_MANY_TO_ONE:
                 $relationshipType = self::RELATIONSHIP_ONE_TO_MANY;
+                break;
             case self::RELATIONSHIP_ONE_TO_MANY:
                 $relationshipType = self::RELATIONSHIP_MANY_TO_ONE;
                 break;
@@ -1073,6 +1081,7 @@ abstract class Model extends \ArrayObject
             
             $relationship['column'] = isset($reverseRelationship['joinColumn']) ? $reverseRelationship['joinColumn'] : $reverseRelationship['column'];
             $relationship['joinColumn'] = $reverseRelationship['column'];
+            
             $relationship['relationship'] = self::getReverseRelationshipType($reverseRelationship['relationship']);
         }
         
