@@ -9,6 +9,7 @@
 namespace PHPMVC\Foundation;
 
 use PHPMVC\DB\DB;
+use PHPMVC\Foundation\Exception\NotFoundException;
 use PHPMVC\Foundation\Model\Model;
 use PHPMVC\Foundation\Model\ModelQueryBuilder;
 use PHPMVC\Foundation\Router;
@@ -18,6 +19,8 @@ class Application
     private $action = null;
 	private $controller = null;
     private $db = null;
+    private $error = null;
+    private $errorBacktrace = null;
 	private $parameters = array();
     private $router = null;
     private static $config = null;
@@ -25,10 +28,34 @@ class Application
     
 	public function __construct($__config)
 	{
-        session_start();
-        
         self::$config = $__config;
         self::$configPath = $__config['ROOT'] . '/config';
+        
+        // display 503: maintenance if the application is in maintenance mode.
+		if ($this->underMaintenance()) {
+			(new __DefaultController())->viewMaintenance();
+			exit(0);
+		}
+        
+        if (!$__config['DEBUG']) {
+            error_reporting(E_ALL & ~E_NOTICE);
+            
+            ini_set('display_errors', 'Off');
+            
+            if (!set_exception_handler([$this, 'handleException']) === false) {
+                echo 'Could not set exception handler.';
+                die(__FILE__ . ':' . __LINE__);
+            }
+            
+            if (!set_error_handler([$this, 'handleError']) === false) {
+                throw new \Exception('Could not set error handler.');
+            }
+            
+            register_shutdown_function([$this, 'shutdownFunction']);
+        }
+    
+        session_start();
+        
         $routesPath = self::$configPath . '/routes.json';
         
         if (file_exists($routesPath)) {
@@ -37,33 +64,28 @@ class Application
             $this->router = new Router($__config['NAME'], $routes);
         }
         
-		$this->splitURL();
-		$maintenanceMode = $this->underMaintenance();
-		
-		if (!class_exists($this->controller)) {
-            var_dump($this->controller);
-            die(__FILE__ . ':' . __LINE__);
-			throw new \Exception('404, not found');
-            //$this->controller = new HomeController();
-			//if (!$maintenanceMode && $specifiedController)
-			//	$this->controller->viewError(404);
-		} else {
-            $this->controller = new $this->controller();
-		}
-		
-        // display 503: maintenance if the application is in maintenance mode.
-		if ($maintenanceMode) {
-			$this->controller->viewMaintenance();
-			exit(0);
+		if (!$this->matchRoute()) {
+            $message = '404: Not found.';
+            
+            if (!class_exists($this->controller)) {
+                $message = "The controller with the class '{$this->controller}' does not exist.";
+            }
+            
+			throw new NotFoundException($message);
 		}
         
+        $this->controller = new $this->controller();
+		
         // setup user handling in Controller class.
-        if (array_key_exists('USR_CLASS', $__config) && array_key_exists('USR_SESSION_KEY', $__config)) {
-            Controller::setUserClass($__config['USR_CLASS'], $__config['USR_SESSION_KEY']);
+        if (isset($__config['USR_CLASS']) && isset($__config['USR_SESSION_KEY'])) {
+            Controller::setUserClass(
+                $__config['USR_CLASS'],
+                $__config['USR_SESSION_KEY']
+            );
         }
         
 		// setup database connection if config is set.
-        if (array_key_exists('DB_DRIVER', self::$config)) {
+        if (isset(self::$config['DB_DRIVER'])) {
             $this->db = new DB(self::$config);
             Controller::setDB($this->db);
             Model::setDB($this->db);
@@ -78,6 +100,42 @@ class Application
 		}
 	}
 	
+    public function handleError($errorNo, $errorStr, $errorFile, $errorLine, $errorContext)
+    {
+        $this->error = [
+            'file' => $errorFile,
+            'line' => $errorLine,
+            'message' => $errorStr,
+            'type' => E_ERROR
+        ];
+        
+        $errorBacktrace = debug_backtrace();
+        $errorBacktrace = array_splice($errorBacktrace, 0, 1);
+        $this->errorBacktrace = $errorBacktrace;
+    }
+    
+    public function handleException(\Exception $exception)
+    {
+        $controller = new \PHPMVC\Foundation\__DefaultController();
+        $exceptionClass = get_class($exception);
+        
+        if ($exceptionClass === NotFoundException::class) {
+            $controller->viewError(404);
+        } else if ($exceptionClass === NotFoundException::class) {
+            $controller->viewError(500);
+        }
+    }
+    
+    public function shutdownFunction()
+    {
+        $error = $this->error ?: error_get_last();
+        
+        if ($error !== null) {
+            $controller = new \PHPMVC\Foundation\__DefaultController();
+            $controller->viewError(500);
+        }
+    }
+    
 	public static function log($logText, $backtraceLevel = 0)
 	{
 		$logFile = self::$configPath . '/log.txt';
@@ -87,7 +145,7 @@ class Application
         }
         
         if (!is_writable($logFile)) {
-            chmod($logFile, 0775);
+            chmod($logFile, 0770);
         }
         
         
@@ -107,7 +165,8 @@ class Application
             'MAINTENANCE',
             'NAME',
             'ROOT',
-            'TITLE'
+            'TITLE',
+            'WHITELIST'
         ];
         
         if (in_array($key, $allowedKeys)) {
@@ -117,37 +176,51 @@ class Application
         return null;
     }
     
-	private function splitURL()
+    public static function isWhitelisted()
+    {
+        $whitelisted = false;
+        
+        $rootDir = self::getConfigValue('ROOT');
+        $whiteListFile = "$rootDir/config/whitelist.txt";
+        $whitelistFileHandler = @fopen($whiteListFile, 'r');
+        
+        if ($whitelistFileHandler !== null) {
+            $ips = explode(PHP_EOL, fread($whitelistFileHandler, filesize($whiteListFile)));
+            
+            foreach ($ips as $ip) {
+                if (preg_match('/^(?!#).+/', $ip) && preg_match("/$ip/", $_SERVER['REMOTE_ADDR'])) {
+                    $whitelisted = true;
+                    break;
+                }
+            }
+        }
+        
+        @fclose($whitelistFileHandler);
+        
+        return $whitelisted;
+    }
+    
+	private function matchRoute()
 	{
-		$url = isset($_GET['url']) ? $_GET['url'] : '/';
-		$url = rtrim($url, '/');
-		$url = filter_var($url, FILTER_SANITIZE_URL);
-		$this->router->matchRoute($url, $controller, $action, $parameters);
+        $url = isset($_GET['url']) ? $_GET['url'] : '/';
+        $url = rtrim($url, '/');
+        $url = filter_var($url, FILTER_SANITIZE_URL);
+        
+        $result = $this->router->matchRoute($url, $controller, $action, $parameters);
         
         $this->controller = $controller;
         $this->action = $action;
-        $this->parameters = $parameters;
-	}
+        $this->parameters = $parameters ?: [];
+        
+        return $result;
+    }
 	
 	private function underMaintenance()
 	{
-		$maintenanceMode = filter_var(self::$config->MAINTENANCE, FILTER_VALIDATE_BOOLEAN);
-		
-		if ($maintenanceMode) {
-			$whitelistTxtFile = @fopen("./config/whitelist.txt", 'r'); 
-			$allowed = false;
-			
-			if (filter_var(WHITELIST, FILTER_VALIDATE_BOOLEAN) && $whitelistTxtFile !== null) {
-				$array = explode('\n', fread($whitelistTxtFile, filesize('./config/whitelist.txt')));
-				foreach ($array as $ip) {
-					if (preg_match('/^(?!#).+/', $ip) && preg_match('/$ip/', $_SERVER['REMOTE_ADDR'])) {
-						$allowed = true;
-						break;
-					}
-				}
-			}
-			
-			return !$allowed;
+        if (self::getConfigValue('MAINTENANCE') === true) {
+            $whitelisted = self::getConfigValue('WHITELIST') && self::isWhitelisted();
+            
+			return !$whitelisted;
 		}
 		
 		return false;

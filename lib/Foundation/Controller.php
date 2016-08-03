@@ -132,6 +132,7 @@ abstract class Controller
 	public function viewMaintenance()
 	{
 		$templatePath = $this->getTemplatePath('maintenance');
+        
 		if (file_exists($templatePath . '/maintenance.php')) {
 			require_once $templatePath . '/maintenance.php';
 		} else {
@@ -248,7 +249,7 @@ abstract class Controller
         }
     }
     
-    // TODO: reflactor status code presentation.
+    // TODO: refactor status code presentation.
 	function viewError($errorCode) {
 		$text = '';
 		switch ($errorCode) {

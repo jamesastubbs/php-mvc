@@ -15,9 +15,21 @@ class MYSQLIDBDriver extends DBDriver
 {
 	public function __construct($config)
 	{
-		$this->connection = new \mysqli($config->DB_HOST, $config->DB_USER, $config->DB_PASS, $config->DB_NAME) or die(mysqli_connect_error());
-		mysqli_set_charset($this->connection, $config->DB_CHARSET);
+		@$this->setupConnection($config);
+        
+        if ($this->connection->connect_error !== null) {
+            throw new \Exception('MySQLi error: ' . mysqli_connect_error());
+        }
 	}
+    
+    private function setupConnection($config)
+    {
+        $this->connection = new \mysqli($config->DB_HOST, $config->DB_USER, $config->DB_PASS, $config->DB_NAME); 
+        
+        if ($this->connection->connect_error === null) {
+            mysqli_set_charset($this->connection, $config->DB_CHARSET);
+        }
+    }
 
 	public function getConnection()
 	{

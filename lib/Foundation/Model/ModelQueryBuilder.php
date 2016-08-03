@@ -20,8 +20,8 @@ class ModelQueryBuilder
     private $selectColumns = null;
     private $selectModel = null;
     private $whereExpr = null;
+    protected $whereArguments = [];
     protected static $db = null;
-    public $whereArguments = [];
     
     public function __construct($data, $isModel)
     {
@@ -310,17 +310,6 @@ class ModelQueryBuilder
     private function addModelFromRelationship(&$model, &$joinModel, $relationship, $relationshipAttribute, $reverseRelationship, $reverseRelationshipAttribute)
     {
         $this->addRelatedModelToModel($joinModel, $model, $relationshipAttribute, $relationship);
-        
-        /*
-        if ($reverseRelationshipAttribute === 'sectionLocations') {
-            var_dump($reverseRelationshipAttribute);
-            var_dump($reverseRelationship);
-            var_dump($model);
-            var_dump($joinModel);
-            die(__FILE__ . ':' . __LINE__);
-        }
-        */
-        
         $this->addRelatedModelToModel($model, $joinModel, $reverseRelationshipAttribute, $reverseRelationship);
     }
     

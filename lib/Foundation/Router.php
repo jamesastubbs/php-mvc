@@ -8,80 +8,97 @@ class Router
     private $routes = [];
     private $baseRoutes = [];
     
-    public function __construct($name, $routes)
+    public function __construct($name, array $routes)
     {
         $this->name = $name;
         
-        if (is_array($routes)) {
-            foreach ($routes as $routePath => $route) {
-                if (preg_match('/^@.+/', $route)) {
-                    switch (str_replace('@', '', $route)) {
-                        case 'default':
-                            $this->baseRoutes[] = explode(':', $routePath)[0];
-                            break;
-                        default:
-                            break;
+        foreach ($routes as $routePath => $route) {
+            if (preg_match('/^@.+/', $route)) {
+                switch (str_replace('@', '', $route)) {
+                    case 'default':
+                        $this->baseRoutes[] = explode(':', $routePath)[0];
+                        break;
+                    default:
+                        break;
+                }
+                
+                continue;
+            }
+            
+            if (!preg_match_all('/^([^\:\:]+)::([A-Za-z0-9_]+)\(([^\)]+)?\)/', $route, $routeParts)) {
+                throw new \Exception("Invalid route: '$route'");
+            }
+            
+            array_shift($routeParts);
+            
+            // get controller, action and parameters values from the regex output.
+            $controller = $routeParts[0][0];
+            $action = $routeParts[1][0];
+            $parametersString = $routeParts[2][0];
+            $parameters = null;
+            
+            if ($parametersString !== '') {
+                $parameters = [
+                    '__order' => [],
+                    '__regex' => []
+                ];
+                
+                preg_match_all('/(?:^|, ?)(?:(-?(?:(?:[0-9]\d*))(?:\.\d+)?)|([A-Za-z0-9_]+)|(\'[^\'\\\]*(?:\\.[^\'\\\]*)*\'))/', $parametersString, $parametersParts);
+                array_shift($parametersParts);
+                
+                $parametersCount = count($parametersParts[0]);
+                
+                for ($i = 0; $i < $parametersCount; $i++) {
+                    $parameterName = null;
+                    $parameterValue = null;
+                    
+                    if ($parametersParts[0][$i] !== '') {
+                        // group 1 has a value, this is a number.
+                        
+                        $parameterName = "int_$i";
+                        $parameterValue = strpos($parametersParts[0][$i], '.') !== false ? floatval($parametersParts[0][$i]) : intval($parametersParts[0][$i]);
+                    } else if ($parametersParts[1][$i] !== '') {
+                        // group 2 has a value, this is a variable referenced in the '$routePath'.
+                        
+                        $parameterName = $parametersParts[1][$i];
+                    } else if ($parametersParts[2][$i] !== '') {
+                        // group 3 has a value, this is a string.
+                        
+                        $parameterName = "str_$i";
+                        $parameterValue = substr($parametersParts[2][$i], 1, -1);
                     }
                     
-                    continue;
-                }
-                
-                // start stripping apart route definition.
-                $routeParts = explode('::', $route);
-                $actionParts = explode('(', $routeParts[1]);
-                
-                // sanitise action string.
-                $actionPartsCount = count($actionParts);
-                if ($actionPartsCount > 1) {
-                    $actionPartsCount--;
-                }
-                
-                $lastActionPart = $actionParts[$actionPartsCount];
-                $lastActionPart = rtrim($lastActionPart, ')');
-                $actionParts[$actionPartsCount] = $lastActionPart;
-                
-                preg_match_all('/(?:^|, ?)([A-Za-z0-9_]+)/', $lastActionPart, $parameters);
-                $parameters = array_fill_keys($parameters[1], null);
-                $parameters['__order'] = [];
-                
-                // start building the route URL.
-                $routeURL = '/^';
-                
-                // retrieve all route parts, so that we can build continue to build the route URL.
-                preg_match_all('/\/[A-Za-z0-9_]+|\/\{[A-Za-z0-9_]+(?:(?:\:[ |]\'[\s\S]+\')|)\}/', $routePath, $routePathMatches);
-                $routePathMatches = $routePathMatches[0];
-                
-                foreach ($routePathMatches as $routePathMatch) {
-                    if (strpos($routePathMatch, '{') !== false) {
-                        // is a parameter.
-                        preg_match_all('/^\/\{([A-Za-z0-9_]+)(?:\:[ |]\'([\s\S]+)\'|)\}$/', $routePathMatch, $parts);
-                        array_shift($parts);
-                        
-                        $parameterName = $parts[0][0];
-                        $parameterRegex = $parts[1][0] !== '' ? $parts[1][0] : '([A-Za-z0-9_]+)';
-                        
-                        if (!array_key_exists($parameterName, $parameters)) {
-                            throw new \Exception('Invalid route.');
-                        }
-                        
-                        $parameters[$parameterName] = $parameterRegex;
-                        array_push($parameters['__order'], $parameterName);
-                        $routeURL .= '\/' . $parameterRegex;
-                    } else {
-                        // is a static part of the URL.
-                        $routeURL .= '\\' . $routePathMatch;
+                    if ($parameterName !== null) {
+                        $parameters['__order'][] = $parameterName;
+                        $parameters[$parameterName] = $parameterValue;
                     }
                 }
                 
-                // append GET parameter regex.
-                $routeURL .= '(?:(?:\?\S[^ \?]+)|)$/';
+                $routePath = '/^' . str_replace('/', '\\/', $routePath);
                 
-                $this->routes[$routeURL] = [
-                    'controller' => $routeParts[0],
-                    'action' => $actionParts[0],
-                    'parameters' => $parameters
-                ];
+                // retrieve all route parts, so that we can build continue to build the route URL.
+                $routePath = preg_replace_callback('/\{([A-Za-z0-9_]+)(?:\:[ |](?:\'([^\'\\\]*(?:\\.[^\'\\\]*)*)\'))?\}/', function ($matches) use (&$parameters) {
+                    $variable = $matches[1];
+                    $regex = '(' . (isset($matches[2]) ? $matches[2] : '[A-Za-z0-9_]+') . ')';
+                    
+                    if (!array_key_exists($variable, $parameters)) {
+                        throw new \Exception("Route variable '$variable' could not be found.");
+                    }
+                    
+                    $parameters['__regex'][$variable] = $regex;
+                    
+                    return $regex;
+                }, $routePath);
             }
+            
+            // append GET parameter regex.
+            $routePath .= '(?:(?:\?\S[^ \?]+)|)$/';
+            
+            $this->routes[$routePath] = [
+                'controller' => $controller,
+                'action' => $action,
+                'parameters' => $parameters
+            ];
         }
     }
     
@@ -95,6 +112,9 @@ class Router
         
         foreach ($routesKeys as $routeKey) {
             if (preg_match_all($routeKey, $url, $urlMatches)) {
+                array_shift($urlMatches);
+                
+                // store the found route.
                 $route = $this->routes[$routeKey];
                 break;
             }
@@ -103,28 +123,30 @@ class Router
         if ($route !== null) {
             $controller = $route['controller'];
             $action = $route['action'];
+            $parameters = [];
+            
             $routeParameters = $route['parameters'];
             $routeParametersOrder = $routeParameters['__order'];
             $routeParametersCount = count($routeParametersOrder);
             
-            // only proceed if number of parameters in URL match route.
-            if (count($urlMatches) === $routeParametersCount) {
-                $parameters = [];
+            for ($i = 0; $i < $routeParametersCount; $i++) {
+                $routeParameterName = $routeParametersOrder[$i];
+                $routeParameter = $routeParameters[$routeParameterName];
                 
-                for ($i = 0; $i < $routeParametersCount; $i++) {
-                    $routeParameterName = $routeParametersOrder[$i];
-                    $urlMatch = $urlMatches[$i][0];
-                    $routeParameter = $routeParameters[$routeParameterName];
-                    
-                    if (preg_match("/$routeParameter/", $urlMatch, $parameterMatches)) {
-                        $parameters[] = $parameterMatches[0];
-                    }
+                // if the parameter is null,
+                // add in the value from the received URL match.
+                if ($routeParameter === null) {
+                    $routeParameter = $urlMatches[$i][0];
                 }
                 
-                if ($routeParametersCount !== count($parameters)) {
-                    // we set this as null so that we proceed to continue to search for the called controller.
-                    $route = null;
-                }
+                // add the parameter.
+                $parameters[] = $routeParameter;
+            }
+            
+            if ($routeParametersCount !== count($parameters)) {
+                // we set these as null so that we proceed to continue to search for the called controller.
+                $parameters = null;
+                $route = null;
             }
         }
         
@@ -132,34 +154,49 @@ class Router
         if ($route === null) {
             $baseRoutes = array_merge([$this->name], $this->baseRoutes);
             
-            foreach ($baseRoutes as $baseRoute) {
-                $controller = (isset($urlParts[0]) && $urlParts[0] !== '') ? $urlParts[0] : null;
-                $action = isset($urlParts[1]) ? $urlParts[1] : null;
-                
-                $urlPartsCount = count($urlParts);
-                $parameters = [];
-                
-                for($i = 2; $i < $urlPartsCount; $i++) {
-                    array_push($parameters, $urlParts[$i]);
+            $_controller = (isset($urlParts[0]) && $urlParts[0] !== '') ? $urlParts[0] : null;
+            $_action = isset($urlParts[1]) ? $urlParts[1] : null;
+            
+            //var_dump($_controller);
+            //die(__FILE__ . ':' . __LINE__);
+            
+            if ($_controller !== null) {
+                foreach ($baseRoutes as $baseRoute) {
+                    // setup controler class name so it is relative to the namespace.
+                    $_controller = $baseRoute . '\\Controller\\' . ucfirst($_controller) . 'Controller';
+                    $_parameters = [];
+                    
+                    $urlPartsCount = count($urlParts);
+                    
+                    // start at index 2 as the first two parts dictate the calling controller and the action.
+                    for ($i = 2; $i < $urlPartsCount; $i++) {
+                        $_parameters[] = $urlParts[$i];
+                    }
+                    
+                    if (class_exists($_controller)) {
+                        if ($_action === null) {
+                            $_action = 'index';
+                        }
+                        
+                        $reflectionMethod = new \ReflectionMethod($_controller, $_action);
+                        
+                        if (!$reflectionMethod->isPublic()) {
+                            continue;
+                        }
+                        
+                        $action = $_action;
+                        $controller = $_controller;
+                        $parameters = $_parameters;
+                        
+                        break;
+                    }
                 }
-                
-                if ($controller === null) {
-                    $controller = 'HomeController';
-                } else {
-                    $controller = ucfirst($controller) . 'Controller';
-                }
-                
-                if ($action === null) {
-                    $action = 'index';
-                }
-                
-                // setup controler class name so it is relative to the namespace.
-                $controller = $baseRoute . "\\Controller\\$controller";
-                
-                if (class_exists($controller)) {
-                    break;
-                }
+            } else {
+                $controller = \PHPMVC\Foundation\Application::getConfigValue('NAME') . '\\Controller\\HomeController';
+                $action = 'index';
             }
         }
+        
+        return $route !== null || $controller !== null;
     }
 }
