@@ -96,7 +96,7 @@ class Application
         if ($reflection->isPublic()) {
             call_user_func_array([$this->controller, $this->action], $this->parameters);
         } else {
-            $this->controller->viewError(404);
+            throw new NotFoundException("The method '{$this->action}' within the class '{$this->controller}' is not publically accessible.");
 		}
 	}
 	
