@@ -11,11 +11,16 @@ class ModelQueryBuilder
     const JOIN_ALIAS_KEY = 'joinAlias';
     const METHOD_KEY = 'method';
     const ON_EXPR_KEY = 'onExpr';
+    const ORDER_BY_ASC = 'ASC';
+    const ORDER_BY_DESC = 'DESC';
     const RELATIONSHIP_KEY = 'relationship';
     const RELATIONSHIP_ATTRIBUTE_KEY = 'relationshipAttribute';
     
     private $aliases = [];
     private $joins = [];
+    private $limit = -1;
+    private $offset = -1;
+    private $orderByColumns = null;
     private $selectAlias = null;
     private $selectColumns = null;
     private $selectModel = null;
@@ -130,8 +135,57 @@ class ModelQueryBuilder
     
     public function where($expr)
     {
+        if ($this->limit !== -1) {
+            throw new \Exception('Cannot set the where clause after the limit has been set.');
+        }
+        
+        if ($this->offset !== -1) {
+            throw new \Exception('Cannot set the where clause after the offset has been set.');
+        }
+        
         $this->whereArguments = array_slice(func_get_args(), 1);
         $this->whereExpr = $expr;
+        
+        return $this;
+    }
+    
+    public function orderBy(array $orderByColumn)
+    {
+        if ($this->orderByColumns === null) {
+            $this->orderByColumns = [];
+        }
+        
+        if (!is_associative($orderByColumn)) {
+            throw new \Exception('Unexpected \'ORDER BY\' format. Expecting [column => order].');
+        }
+        
+        $this->orderByColumns = array_merge($this->orderByColumns, $orderByColumn);
+        
+        return $this;
+    }
+    
+    public function limit($limit)
+    {
+        if ($this->offset !== -1) {
+            throw new \Exception('Cannot set the limit as the offset value has already been set.');
+        }
+        
+        if (!is_int($limit)) {
+            throw new \Exception('Limit value must be a numeric value.');
+        }
+        
+        $this->limit = $limit;
+        
+        return $this;
+    }
+    
+    public function offset($offset)
+    {
+        if (!is_int($offset)) {
+            throw new \Exception('Offset value must be a numeric value.');
+        }
+        
+        $this->offset = $offset;
         
         return $this;
     }
@@ -192,6 +246,30 @@ class ModelQueryBuilder
         
         if ($this->whereExpr !== null) {
             $sql .= ' WHERE ' . $this->whereExpr;
+        }
+        
+        if ($this->orderByColumns !== null) {
+            $sql .= ' ORDER BY';
+            
+            $first = true;
+            
+            foreach ($this->orderByColumns as $columnName => $columnOrder) {
+                if ($first) {
+                    $first = false;
+                } else {
+                    $sql .= ',';
+                }
+                
+                $sql .= " $columnName $columnOrder";
+            }
+        }
+        
+        if ($this->limit !== -1) {
+            $sql .= " LIMIT {$this->limit}";
+        }
+        
+        if ($this->offset !== -1) {
+            $sql .= " OFFSET {$this->OFFSET}";
         }
         
         return $sql;
@@ -371,4 +449,9 @@ class ModelQueryBuilder
         
         $this->aliases[$alias] = $model;
     }
+}
+
+function is_associative(array $array)
+{
+    return array_keys($array) !== range(0, count($array) - 1);
 }
