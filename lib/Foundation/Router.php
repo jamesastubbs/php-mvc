@@ -29,6 +29,8 @@ class Router
                 throw new \Exception("Invalid route: '$route'");
             }
             
+            $routePath = '/^' . preg_quote($routePath, '/');
+            
             array_shift($routeParts);
             
             // get controller, action and parameters values from the regex output.
@@ -74,7 +76,7 @@ class Router
                     }
                 }
                 
-                $routePath = '/^' . str_replace('/', '\\/', $routePath);
+                //$routePath = '/^' . $routePath;//str_replace('/', '\\/', $routePath);
                 
                 // retrieve all route parts, so that we can build continue to build the route URL.
                 $routePath = preg_replace_callback('/\{([A-Za-z0-9_]+)(?:\:[ |](?:\'([^\'\\\]*(?:\\.[^\'\\\]*)*)\'))?\}/', function ($matches) use (&$parameters) {
@@ -152,18 +154,19 @@ class Router
         
         // search for existing controller as last resort.
         if ($route === null) {
+            $action = null;
+            $controller = null;
+            $parameters = null;
+            
             $baseRoutes = array_merge([$this->name], $this->baseRoutes);
             
             $_controller = (isset($urlParts[0]) && $urlParts[0] !== '') ? $urlParts[0] : null;
             $_action = isset($urlParts[1]) ? $urlParts[1] : null;
             
-            //var_dump($_controller);
-            //die(__FILE__ . ':' . __LINE__);
-            
             if ($_controller !== null) {
                 foreach ($baseRoutes as $baseRoute) {
                     // setup controler class name so it is relative to the namespace.
-                    $_controller = $baseRoute . '\\Controller\\' . ucfirst($_controller) . 'Controller';
+                    $__controller = $baseRoute . '\\Controller\\' . ucfirst($_controller) . 'Controller';
                     $_parameters = [];
                     
                     $urlPartsCount = count($urlParts);
@@ -173,19 +176,19 @@ class Router
                         $_parameters[] = $urlParts[$i];
                     }
                     
-                    if (class_exists($_controller)) {
+                    if (class_exists($__controller)) {
                         if ($_action === null) {
                             $_action = 'index';
                         }
                         
-                        $reflectionMethod = new \ReflectionMethod($_controller, $_action);
+                        $reflectionMethod = new \ReflectionMethod($__controller, $_action);
                         
                         if (!$reflectionMethod->isPublic()) {
                             continue;
                         }
                         
                         $action = $_action;
-                        $controller = $_controller;
+                        $controller = $__controller;
                         $parameters = $_parameters;
                         
                         break;

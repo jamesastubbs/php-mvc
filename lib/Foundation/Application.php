@@ -65,9 +65,9 @@ class Application
         }
         
 		if (!$this->matchRoute()) {
-            $message = '404: Not found.';
+            $message = 'Cannot match any route.';
             
-            if (!class_exists($this->controller)) {
+            if ($this->controller !== null && !class_exists($this->controller)) {
                 $message = "The controller with the class '{$this->controller}' does not exist.";
             }
             
