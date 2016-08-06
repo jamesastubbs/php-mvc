@@ -136,6 +136,38 @@ class Application
         }
     }
     
+    public static function mail($callback)
+    {
+        if (!isset(self::$config['MAIL_HOST'])) {
+            throw new \Exception('Cannot send any mail as the settings have not been configured.');
+        }
+        
+        if (!class_exists('\\PHPMailer')) {
+            $classPath = self::getConfigValue('ROOT') . '/vendor/phpmailer/phpmailer/PHPMailerAutoload.php';
+            
+            if (!file_exists($classPath)) {
+                throw new \Exception('PHPMailer composer package is not installed. Please run \'composer require phpmailer/phpmailer\' from the root application directory.');
+            }
+            
+            require_once $classPath;
+        }
+        
+        $mailer = new \PHPMailer();
+        $mailer->isSMTP();
+        $mailer->Host = self::$config['MAIL_HOST'];
+        $mailer->Port =  self::$config['MAIL_PORT'];
+        $mailer->Username =  self::$config['MAIL_USER'];
+        $mailer->Password =  self::$config['MAIL_PASS'];
+        $mailer->SMTPSecure =  self::$config['MAIL_ENCRYPT'];
+        $mailer->SMTPAuth = self::$config['MAIL_AUTH'];
+        
+        $callback($mailer);
+        
+        $result = $mailer->send();
+        
+        return $result;
+    }
+    
 	public static function log($logText, $backtraceLevel = 0)
 	{
 		$logFile = self::$configPath . '/log.txt';
