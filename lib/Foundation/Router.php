@@ -25,11 +25,12 @@ class Router
                 continue;
             }
             
+            $routePathI = 0;
+            $routePathReplacements = [];
+            
             if (!preg_match_all('/^([^\:\:]+)::([A-Za-z0-9_]+)\(([^\)]+)?\)/', $route, $routeParts)) {
                 throw new \Exception("Invalid route: '$route'");
             }
-            
-            $routePath = '/^' . preg_quote($routePath, '/');
             
             array_shift($routeParts);
             
@@ -76,10 +77,8 @@ class Router
                     }
                 }
                 
-                //$routePath = '/^' . $routePath;//str_replace('/', '\\/', $routePath);
-                
                 // retrieve all route parts, so that we can build continue to build the route URL.
-                $routePath = preg_replace_callback('/\{([A-Za-z0-9_]+)(?:\:[ |](?:\'([^\'\\\]*(?:\\.[^\'\\\]*)*)\'))?\}/', function ($matches) use (&$parameters) {
+                $routePath = preg_replace_callback('/\{([A-Za-z0-9_]+)(?:\:[ |](?:\'([^\'\\\]*(?:\\.[^\'\\\]*)*)\'))?\}/', function ($matches) use (&$parameters, &$routePathI, &$routePathReplacements) {
                     $variable = $matches[1];
                     $regex = '(' . (isset($matches[2]) ? $matches[2] : '[A-Za-z0-9_]+') . ')';
                     
@@ -89,8 +88,18 @@ class Router
                     
                     $parameters['__regex'][$variable] = $regex;
                     
-                    return $regex;
+                    $routePathI++;
+                    $key = "\$__$routePathI";
+                    $routePathReplacements["\\$key"] = $regex;
+                    
+                    return $key;
                 }, $routePath);
+            }
+            
+            $routePath = '/^' . preg_quote($routePath, '/');
+            
+            foreach ($routePathReplacements as $key => $replacement) {
+                $routePath = str_replace($key, $replacement, $routePath);
             }
             
             // append GET parameter regex.
