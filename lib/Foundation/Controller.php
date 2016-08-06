@@ -147,6 +147,14 @@ abstract class Controller
 		$this->viewFunction($view, $data, $this->viewTemplate, $viewPath);
 	}
     
+    private function viewJSON($data)
+    {
+        $jsonOption = filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN) ? JSON_PRETTY_PRINT : 0;
+        error_reporting(0);
+        header("Content-Type: application/json");
+        echo json_encode($data, $jsonOption);
+    }
+    
 	protected function viewWithoutTemplate($view, $data = [], $viewPath = null)
 	{
 		$this->viewFunction($view, $data, false, $viewPath);
