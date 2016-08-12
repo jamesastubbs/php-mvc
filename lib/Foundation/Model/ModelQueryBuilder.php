@@ -308,13 +308,14 @@ class ModelQueryBuilder
                     
                     if (array_key_exists($fetchedRowKey, $fetchedRow)) {
                         $primaryValue = $fetchedRow[$fetchedRowKey] . '';
-                        $model = new $modelClass();
                         
                         // if the model with the current primary key value already exists in the cache,
                         // skip this and continue on with the loop.
-                        if (isset($cache[$alias][$primaryValue])) {
+                        if ($primaryValue === null || $primaryValue === '' || isset($cache[$alias][$primaryValue])) {
                             continue;
                         }
+                        
+                        $model = new $modelClass();
                         
                         // iterate through each model's columns.
                         // populating the model's values from the current '$fetchedRow' by using the column name as the key.
@@ -332,42 +333,54 @@ class ModelQueryBuilder
                         }
                         
                         // populate an array for this model alias.
-                        if (!isset($cache[$alias])) {
-                            $cache[$alias] = [];
+                        if (!isset($cache[$modelClass])) {
+                            $cache[$modelClass] = [];
                         }
                         
                         // store the model in the cache as it is new.
-                        $cache[$alias][$primaryValue] = $model;
+                        $cache[$modelClass][$primaryValue] = $model;
                     }
                 }
             }
             
             if (!empty($cache)) {
                 // iterate through all of the joins.
-                foreach ($joins as &$join) {                
+                foreach ($joins as &$join) {
                     $alias = $join[self::ALIAS_KEY];
                     $joinAlias = $join[self::JOIN_ALIAS_KEY];
                     
-                    if (isset($cache[$alias]) && isset($cache[$joinAlias])) {
+                    $modelClass = $aliases[$alias];
+                    $joinModelClass = $aliases[$joinAlias];
+                    
+                    if (isset($cache[$modelClass]) && isset($cache[$joinModelClass])) {
                         // get the cached models.
-                        $models = $cache[$alias];
-                        $joinModels = $cache[$joinAlias];
+                        $models = &$cache[$modelClass];
+                        $joinModels = &$cache[$joinModelClass];
                         
                         $relationship = $join[self::RELATIONSHIP_KEY];
                         $relationshipAttribute = $join[self::RELATIONSHIP_ATTRIBUTE_KEY];
                         
-                        // TODO: remove second parameter.
                         $reverseRelationship = Model::getReverseRelationship($relationship);
-                        $reverseRelationshipAttribute = isset($relationship['inverse']) ? $relationship['inverse'] : $relationship['mappedBy'];
+                        
+                        if ($reverseRelationship === null && !isset($relationship['column'])) {
+                            // TODO: create more meaningful exception message.
+                            throw new \Exception('Model is not configured for reverse relationships.');
+                        }
+                        
+                        $reverseRelationshipAttribute = null;
+                        
+                        if ($reverseRelationship !== null) {
+                            $reverseRelationshipAttribute = isset($relationship['inverse']) ? $relationship['inverse'] : $relationship['mappedBy'];
+                        }
                         
                         $column = $relationship['column'];
                         $joinColumn = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $column;
                         
                         foreach ($models as &$model) {
-                            $columnValue = $model->{$column};
+                            $columnValue = $model->{$joinColumn};
                             
                             foreach ($joinModels as &$joinModel) {
-                                $joinColumnValue = $joinModel->{$joinColumn};
+                                $joinColumnValue = $joinModel->{$column};
                                 
                                 if ($columnValue === $joinColumnValue) {
                                     $this->addModelFromRelationship($model, $joinModel, $relationship, $relationshipAttribute, $reverseRelationship, $reverseRelationshipAttribute);
@@ -378,17 +391,20 @@ class ModelQueryBuilder
                 }
                 
                 // return the collection of models (if any).
-                $result = array_merge($cache[$this->selectAlias], []);
+                $result = array_merge($cache[$aliases[$this->selectAlias]], []);
             }
         }
         
         return $result;
     }
     
-    private function addModelFromRelationship(&$model, &$joinModel, $relationship, $relationshipAttribute, $reverseRelationship, $reverseRelationshipAttribute)
+    private function addModelFromRelationship(&$model, &$joinModel, $relationship, $relationshipAttribute, $reverseRelationship = null, $reverseRelationshipAttribute = null)
     {
         $this->addRelatedModelToModel($joinModel, $model, $relationshipAttribute, $relationship);
-        $this->addRelatedModelToModel($model, $joinModel, $reverseRelationshipAttribute, $reverseRelationship);
+        
+        if ($reverseRelationship !== null && $reverseRelationshipAttribute !== null) {
+            $this->addRelatedModelToModel($model, $joinModel, $reverseRelationshipAttribute, $reverseRelationship);
+        }
     }
     
     /**
@@ -404,13 +420,25 @@ class ModelQueryBuilder
                 $model->{$attribute}  = [];
             }
             
+            $add = true;
+            $joinModelClass = get_class($joinModel);
+            $primaryKey = $joinModelClass::$primaryKey;
+            
+            foreach ($model->{$attribute} as $compareModel) {
+                if ($compareModel->{$primaryKey} === $joinModel->{$primaryKey}) {
+                    $add = false;
+                    break;
+                }
+            }
+            
             // only add the $joinModel if it hasn't already been added.
-            if (!in_array($joinModel, $model->{$attribute})) {
+            if ($add) {
                 $model->{$attribute}[] = $joinModel;
             }
         } else if (!$toMany) {
             if (isset($model->{$attribute}) && $model->{$attribute} !== $joinModel) {
-                throw new \Exception("The attribute '$attribute' has already been set in the model " . get_class($model) . ".'");
+                $modelClass = get_class($model);
+                throw new \Exception("The attribute '$attribute' has already been set in the model '$modelClass'.");
             }
             
             $model->{$attribute} = $joinModel;

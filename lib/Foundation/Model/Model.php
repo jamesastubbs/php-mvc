@@ -985,7 +985,7 @@ abstract class Model extends \ArrayObject
             $reverseKey = 'mappedBy';
         } else {
             // TODO: create better exception messages to reveal the problematic relationship.
-            throw new \Exception('Relationship has not been configured for reversing.');
+            return null;
         }
         
         $relationshipName = $relationship[$reverseKey];

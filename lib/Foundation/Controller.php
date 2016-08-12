@@ -210,6 +210,10 @@ abstract class Controller
         $prefix = array_shift($viewParts);
         $view = array_pop($viewParts);
         
+        if ($view === '') {
+            throw new \Exception('View name cannot be blank.');
+        }
+        
         $viewPath = $this->getViewPath($prefix);
         
         if (file_exists($viewPath)) {
