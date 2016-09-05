@@ -119,9 +119,8 @@ abstract class Controller
                 
                 if ($user !== null) {
                     $this->user = $user;
+                    
                     return true;
-                } else {
-                    unset($_SESSION[$sessionKey]);
                 }
             }
         }

@@ -4,6 +4,8 @@ namespace PHPMVC\Foundation\Model;
 
 use PHPMVC\Foundation\Model\ClassResolver;
 use PHPMVC\Foundation\Model\Model;
+use PHPMVC\Foundation\Model\Relationship\ToManyRelationship;
+use PHPMVC\Foundation\Model\Relationship\ToOneRelationship;
 
 class ModelQueryBuilder
 {
@@ -339,6 +341,7 @@ class ModelQueryBuilder
                         
                         // store the model in the cache as it is new.
                         $cache[$modelClass][$primaryValue] = $model;
+                        Model::cacheModel($model);
                     }
                 }
             }
@@ -416,16 +419,20 @@ class ModelQueryBuilder
         $toMany = $relationshipType === Model::RELATIONSHIP_ONE_TO_MANY || $relationshipType === Model::RELATIONSHIP_MANY_TO_MANY;
         
         if ($toMany) {
-            if (!isset($model->{$attribute})) {
-                $model->{$attribute}  = [];
-            }
+            //if (!isset($model->{$attribute})) {
+            //    $modelClass = get_class($model);
+            //    $model->{$attribute} = new ModelCollection($modelClass);
+            //}
             
             $add = true;
+            $column = $relationship['column'];
             $joinModelClass = get_class($joinModel);
             $primaryKey = $joinModelClass::$primaryKey;
             
             foreach ($model->{$attribute} as $compareModel) {
-                if ($compareModel->{$primaryKey} === $joinModel->{$primaryKey}) {
+                $compareModelColumn = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $relationship['column'];
+                
+                if ($compareModel->{$compareModelColumn} === $joinModel->{$column}) {
                     $add = false;
                     break;
                 }
@@ -433,7 +440,7 @@ class ModelQueryBuilder
             
             // only add the $joinModel if it hasn't already been added.
             if ($add) {
-                $model->{$attribute}[] = $joinModel;
+                $model->{$attribute}->add($joinModel);
             }
         } else if (!$toMany) {
             if (isset($model->{$attribute}) && $model->{$attribute} !== $joinModel) {
@@ -441,7 +448,7 @@ class ModelQueryBuilder
                 throw new \Exception("The attribute '$attribute' has already been set in the model '$modelClass'.");
             }
             
-            $model->{$attribute} = $joinModel;
+            $model->{$attribute}->set($joinModel);
         }
     }
     

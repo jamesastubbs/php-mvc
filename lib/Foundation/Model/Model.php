@@ -8,16 +8,17 @@
 
 namespace PHPMVC\Foundation\Model;
 
-use \PHPMVC\Foundation\Application;
-use \PHPMVC\Foundation\Model\ClassResolver;
-use \PHPMVC\Foundation\Model\ModelPredicate;
+use PHPMVC\Foundation\Application;
+use PHPMVC\Foundation\Model\ClassResolver;
+use PHPMVC\Foundation\Model\Relationship\ToManyRelationship;
+use PHPMVC\Foundation\Model\Relationship\ToOneRelationship;
 
-abstract class Model extends \ArrayObject
+abstract class Model
 {
-	const StateError = -1;
-	const StateSelect = 1;
-	const StateJoin = 2;
-	const StateOn = 3;
+    const COLUMN_BOOLEAN = 'boolean';
+    const COLUMN_DATE = 'date';
+    const COLUMN_INTEGER = 'integer';
+    const COLUMN_STRING = 'string';
     
     const RELATIONSHIP_UNKNOWN = -1;
     const RELATIONSHIP_ONE_TO_ONE = 0;
@@ -25,29 +26,60 @@ abstract class Model extends \ArrayObject
     const RELATIONSHIP_MANY_TO_ONE = 2;
     const RELATIONSHIP_MANY_TO_MANY = 3;
     
-    const COLUMN_BOOLEAN = 'boolean';
-    const COLUMN_DATE = 'date';
-    const COLUMN_INTEGER = 'integer';
-    const COLUMN_STRING = 'string';
-    
-	public static $tableName;
-    public static $relationships = [];
+    private $_attributes = [];
+    private $_cachedAttributes = [];
+    private $_relationships = [];
     public static $primaryKey = null;
+    public static $relationships = [];
+    public static $tableName;
     public static $columns;
     protected static $db = null;
     protected static $_cachedModels = [];
-    private $isSaved = false;
-	private $_tmp;
-	
-	final public function __construct()
-	{
-		parent::__construct(array(), \ArrayObject::ARRAY_AS_PROPS);
-	}
-	
+    protected static $_cacheSetup = false;
+    
+    public function __construct()
+    {
+        if (Model::$_cacheSetup === null) {
+            // TODO: initalise cache handler.
+        }
+        
+        $selfClass = get_class($this);
+        $columns = $selfClass::$columns;
+        $relationships = $selfClass::$relationships;
+        
+        foreach (array_keys($columns) as $column) {
+            $this->_attributes[$column] = null;
+            $this->_cachedAttributes[$column] = null;
+        }
+        
+        foreach ($relationships as $relationshipName => $relationship) {
+            $modelClass = ClassResolver::resolve($relationship['model']);
+            $relationshipType = isset($relationship['relationship']) ? $relationship['relationship'] : $selfClass::getRelationship($relationshipName)['relationship'];
+            
+            if ($relationshipType === Model::RELATIONSHIP_ONE_TO_MANY || $relationshipType === Model::RELATIONSHIP_MANY_TO_MANY) {
+                $this->_relationships[$relationshipName] = new ToManyRelationship($modelClass);
+            } else {
+                $this->_relationships[$relationshipName] = new ToOneRelationship($modelClass);
+            }
+        }
+    }
+    
     final public static function setDB($db)
     {
         self::$db = $db;
         $selfClass = get_called_class();
+    }
+    
+    final public static function getStored($id)
+    {
+        $model = null;
+        $selfClass = get_called_class();
+        
+        if (isset(self::$_storage[$selfClass]) && isset(self::$_storage[$selfClass]["$id"])) {
+            $model = self::$_storage[$selfClass]["$id"];
+        }
+        
+        return $model;
     }
     
     final protected static function getDB()
@@ -107,8 +139,7 @@ abstract class Model extends \ArrayObject
 			$relatingModel->{$columnName} = $value;
             
             if ($columnName !== $relatingModelPrimaryKey) {
-                $oldKey = "__old_$columnName";
-                $relatingModel->{$oldKey} = $value;
+                $_cachedAttributes[$columnName] = $value;
             }
 		}
         
@@ -209,15 +240,19 @@ abstract class Model extends \ArrayObject
     public static function findByID($id)
     {
         $selfClass = get_called_class();
-        $selfPrimaryKey = $selfClass::$primaryKey;
+        $primaryKey = $selfClass::$primaryKey;
         
-        $urls = $selfClass::select(
-            new ModelPredicate("WHERE $selfPrimaryKey = ? LIMIT 1", $id)
-        );
+        $modelClass = ClassResolver::shorten($selfClass, $modelName);
+        $alias = strtolower(substr($modelName, 1, 1));
         
-        $url = empty($urls) ? null : $urls[0];
+        $models = ModelQueryBuilder::select($modelClass, $alias)
+            ->where("$alias.$primaryKey = ?", $id)
+            ->limit(1)
+            ->getResult();
         
-        return $url;
+        $model = empty($models) ? null : $models[0];
+        
+        return $model;
     }
     
 	public function create($fetchAfter = false)
@@ -248,8 +283,7 @@ abstract class Model extends \ArrayObject
 				array_push($arguments, $value);
 				
                 if ($key !== $selfPrimaryKey) {
-				    $oldKey = "__old_$key";
-				    $this->{$oldKey} = $value;
+                    $this->_cachedAttributes[$key] = $value;
                 }
 				
 				unset($columns[$i]);
@@ -282,9 +316,8 @@ abstract class Model extends \ArrayObject
 			
 			foreach ($columns as $column) {
 				if (array_key_exists($column, $result)) {
-					$this->{$column} = $result[$column];
-					$oldColumn = "__old_$column";
-					$this->{$oldColumn} = $result[$column];
+					$this->_attributes[$column] = $result[$column];
+                    $this->_cachedAttributes[$column] = $result[$column];
 				}
 			}
 		}
@@ -357,11 +390,10 @@ abstract class Model extends \ArrayObject
 		foreach ($fetchedData as $data) {
 			$model = new $selfName();
 			foreach ($data as $key => $value) {
-				$model->{$key} = $value;
+				$model->_attributes[$key] = $value;
                 
                 if ($key !== $selfName::$primaryKey) {
-				    $oldKey = "__old_$key";
-				    $model->{$oldKey} = self::getColumnValue($key, $value, false);
+				    $model->{"__old_$key"} = self::getColumnValue($key, $value, false);
                 }
 			}
 			array_push($fetchedObjects, $model);
@@ -370,401 +402,23 @@ abstract class Model extends \ArrayObject
 		return $fetchedObjects;
 	}
 	
-	public static function selectWith(ModelPredicate $predicate = null)
-	{
-		$selfName = get_called_class();
-		return $selfName::selectColumnsWith('*', $predicate);
-	}
-	
-	public static function selectColumnsWith($columns, ModelPredicate $predicate = null)
-	{
-		$selfName = get_called_class();
-		$statement = 'SELECT ';
-        
-		if (gettype($columns) == 'string') {
-			if (preg_match('/\ /', $columns)) {
-				$strComponents = explode(' ', $columns);
-				
-                for ($i = 0; $i < count($strComponents); $i++) {
-					$strComponent = $strComponents[$i];
-					
-                    // TODO: refactor column name resolution.
-                    // use either regex or explode, not both.
-                    if (preg_match('/\\$::(\w+)\./', $strComponent)) {
-						$strComponentParts = explode('.', $strComponent);
-						$modelName = preg_replace('/\\\$::/', '', $strComponentParts[0]);
-						$columnName = $strComponentParts[1];
-						$strComponents[$i] = $modelName::$tableName . ".$columnName";
-					}
-				}
-                
-				$columns = implode(' ', $strComponents);
-				
-			}
-            
-			$statement .= "$columns ";
-		} else {
-			$first = true;
-			foreach ($columns as $column) {
-				if ($first)
-					$first = false;
-				else
-					$statement .= ', ';
-				
-				if (gettype($column) != 'string') {
-					$subFirst = true;
-					foreach ($column as $columnName) {
-						if ($subFirst)
-							$subFirst = false;
-						else
-							$statement .= ', ';
-						
-						$statement .= $column->tableName . ".$columnName";
-					}
-				} else
-					$statement .= $column;
-			}
-		}
-		
-		$statement .= ' FROM ' . $selfName::$tableName;
-		
-        if ($predicate !== null) {
-            $classParts = explode('\\', $selfName);
-            $modelClass = array_pop($classParts);
-            $predicate->addClasses([$modelClass => $selfName]);
-        }
-        
-		$model = new $selfName();
-		$model->setTmp('state', 1);
-		$model->setTmp('statement', $statement);
-		$model->setTmp('predicate', $predicate);
-		$model->setTmp('arguments', (isset($predicate) ? $predicate->arguments : null));
-		
-		return $model;
-	}
-    
-    /**
-     * Automatically builds the join queries based on the relationships declared in the '$parentModel'.
-     * @param   string      $parentModel
-     * @return  Model
-     */
-    /*
-    public function innerJoinRelationships($parentModel = null)
-    {
-        return $this->joinRelationships('inner', $parentModel);
-    }
-    
-    public function leftJoinRelationships($parentModel = null)
-    {
-        return $this->joinRelationships('left', $parentModel);
-    }
-    
-    protected function joinRelationships($joinMethod, $parentModel = null)
-    {
-        $joinMethod = $joinMethod . 'Join';
-        $selfClass = get_class($this);
-        $class = ClassResolver::resolve($parentModel === null ? $parentModel : $selfClass);
-        $relationshipsNames = array_keys($class::$relationships);
-        $model = $this;
-        
-        foreach ($relationshipsNames as $relationshipName) {
-            $relationship = $class::getRelationship($relationshipName);
-            $model = $model->{$joinMethod}($class, $relationship['model'])->on($relationship['joinColumn'], $relationship['column']);
-        }
-        
-        return $this;
-    }
-    
-	public function innerJoin($parentModel, $childModel, $isTable = false)
-	{
-		return $this->joinMethod($parentModel, $childModel, 'INNER', $isTable);
-	}
-
-	public function leftJoin($parentModel, $childModel, $isTable = false)
-	{
-		return $this->joinMethod($parentModel, $childModel, 'LEFT', $isTable);
-	}
-
-	public function rightJoin($parentModel, $childModel, $isTable = false)
-	{
-		return $this->joinMethod($parentModel, $childModel, 'RIGHT', $isTable);
-	}
-
-	final private function joinMethod($parentModel, $childModel, $joinMethod, $isTable)
-	{
-		if (!isset($this->_tmp) || !(($this->_tmp['state'] != 1 || $this->_tmp['state'] != 3))) {
-			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN)) {
-				$this->debug('join');
-            }
-            
-			return $this;
-		}
-        
-		if (!array_key_exists('joins', $this->_tmp)) {
-			$this->_tmp['joins'] = [];
-        }
-        
-		array_push($this->_tmp['joins'], [
-			'parent_model' => $parentModel,
-			'child_model' => $childModel,
-			'method' => $joinMethod,
-			'is_table' => $isTable
-		]);
-        
-        if (!array_key_exists('current_join', $this->_tmp)) {
-			$this->_tmp['current_join'] = self::StateError;
-        }
-        
-        $predicate = $this->_tmp['predicate'];
-        
-        // if predicate exists and we're not joining via table names, add Model classes.
-        if ($predicate !== null && !$isTable) {
-            $selfName = get_called_class();
-            
-            $classParts = explode('\\', $selfName);
-            array_pop($classParts);
-            $modelNamespace = implode('\\', $classParts);
-            
-            // add parent class.
-            $predicate->addClasses([$parentModel => "$modelNamespace\\$parentModel"]);
-            
-            // add child class.
-            $predicate->addClasses([$childModel => "$modelNamespace\\$childModel"]);
-        }
-        
-		$this->_tmp['current_join']++;
-		$this->_tmp['state'] = self::StateJoin;
-
-		return $this;
-	}
-	
-	public function on($primaryKey, $foreignKey = null)
-	{
-		if (!isset($this->_tmp) || $this->_tmp['state'] != 2) {
-			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN))
-				$this->debug('on');
-			return $this;
-		}
-
-		if (is_null($foreignKey))
-			$foreignKey = $primaryKey;
-
-		$joinDefinition = $this->_tmp['joins'][$this->_tmp['current_join']];
-		$joinDefinition['primary_key'] = $primaryKey;
-		$joinDefinition['foreign_key'] = $foreignKey;
-		
-		$this->_tmp['joins'][$this->_tmp['current_join']] = $joinDefinition;
-
-		$this->_tmp['state'] = 3;
-
-		return $this;
-	}
-	
-	public function execute($returnRaw = false)
-	{
-		if (!isset($this->_tmp) || !($this->_tmp['state'] != 1 || $this->_tmp['state'] != 3)) {
-			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN)) {
-				$this->debug('execute');
-            }
-            
-			return $this;
-		}
-		
-		$relationships = [];
-		$columns = $this->_tmp;
-		$statement = '';
-        $selfClass = get_called_class();
-        
-		if (isset($this->_tmp['joins'])) {
-			$joinDefinitions = $this->_tmp['joins'];
-            $joinDefinitionsCount = count($joinDefinitions);
-            
-            for ($i = 0; $i < $joinDefinitionsCount; $i++) {
-                $joinDefinition = $joinDefinitions[$i];
-				$joinMethod = $joinDefinition['method'];
-                $tableName = $joinDefinition['child_model'];
-				$childModel = ClassResolver::resolve($tableName);
-                
-				$parentTableName = $joinDefinition['parent_model'];
-				$parentModel = ClassResolver::resolve($parentTableName);
-				$primaryKey = $joinDefinition['primary_key'];
-				$foreignKey = $joinDefinition['foreign_key'];
-                
-				if (!$joinDefinition['is_table']) {
-					$tableName = $childModel::$tableName;
-					$parentTableName = $parentModel::$tableName;
-					if (!array_key_exists($parentModel, $relationships)) {
-						$relationships[$parentModel] = [];
-					}
-					$relationships[$parentModel][$childModel] = [
-						'primaryKey' => $primaryKey,
-						'foreignKey' => $foreignKey
-					];
-				}
-
-				if ($parentTableName == $tableName) {
-                    var_dump($joinDefinition);
-					die(__FILE__ . ':' . __LINE__);
-                }
-                
-				$statement .= " $joinMethod JOIN $tableName ON $parentTableName.$primaryKey = $tableName.$foreignKey";
-            }
-			
-			$columns = [];
-            //$modelNamespaceRegex = '/' . $this->modelNamespace . '\/';
-            
-			foreach ($relationships as $parentModelClass => $parentRelationships) {
-				if (!array_key_exists($parentModelClass, $columns)) {
-                    $parentModelNameParts = explode('\\', $parentModelClass);
-                    $parentModelName = array_pop($parentModelNameParts);
-                    
-					$modelColumns = [];
-                    $parentModelColumnsKeys = array_keys($parentModelClass::$columns);
-                    
-					foreach ($parentModelColumnsKeys as $modelColumnName) {
-                        $columnString = ($parentModelClass::$tableName . ".$modelColumnName AS '$parentModelName.$modelColumnName'");
-						array_push($modelColumns, $columnString);
-					}
-                    
-					$columns[$parentModelName] = $modelColumns;
-				}
-				
-				foreach ($parentRelationships as $childModelClass => $childRelationship) {
-					if (!array_key_exists($childModelClass, $columns)) {
-						$childModelNameParts = explode('\\', $childModelClass);
-                        $childModelName = array_pop($childModelNameParts);
-                        
-                        $modelColumns = [];
-                        $childModelColumnsKeys = array_keys($childModelClass::$columns);
-                        
-						foreach ($childModelColumnsKeys as $modelColumnName) {
-							$columnString = ($childModelClass::$tableName . ".$modelColumnName AS '$childModelName.$modelColumnName'");
-                            array_push($modelColumns, $columnString);
-						}
-                        
-						$columns[$childModelName] = $modelColumns;
-					}
-				}
-			}
-		}
-        
-		$selectStatement = 'SELECT ';
-        
-		if (gettype($columns) == 'string') {
-			$selectStatement .= "$columns ";
-        } else {
-			$first = true;
-			
-            foreach ($columns as $column) {
-				if ($first) {
-					$first = false;
-                } else {
-					$selectStatement .= ', ';
-                }
-                
-				if (gettype($column) != 'string') {
-					$subFirst = true;
-                    
-					foreach ($column as $columnName) {
-						if ($subFirst) {
-							$subFirst = false;
-                        } else {
-							$selectStatement .= ', ';
-                        }
-
-						$selectStatement .= $columnName;
-					}
-				} else
-					$selectStatement .= $column;
-			}
-		}
-        		
-		$selfClass = get_class($this);
-        $selfNameParts = explode('\\', $selfClass);
-        $selfName = array_pop($selfNameParts);
-        $selfPrimaryKey = $selfClass::$primaryKey;
-        
-		$selectStatement .= ' FROM ' . $selfClass::$tableName;
-		$statement = $selectStatement . $statement;
-		
-		if (isset($this->_tmp['predicate'])) {
-			$statement .= ' ' . $this->_tmp['predicate']->getFormattedQuery(
-                $selfClass === \JStubbsCMS\Model\Section::class ? \JStubbsCMS\Model\Section::class : null
-            );
-        }
-        
-		$arguments = $this->_tmp['arguments'];
-        
-		$fetchedData = self::$db->query($statement, (isset($arguments) ? $arguments : null));
-        $fetchedObjects = [];
-		
-		foreach ($fetchedData as $data) {
-			$model = new $selfClass();
-            
-			foreach ($data as $key => $value) {
-				if (strpos($key, "$selfName.") === 0) {
-                    $key = str_replace("$selfName.", '', $key);
-                    
-                    if ($key !== $selfPrimaryKey) {
-                        $oldKey = "__old_$key";
-                        $model->{$oldKey} = $value;
-                    }
-                }
-				                
-				$model->{$key} = $value;
-			}
-			array_push($fetchedObjects, $model);
-		}
-		
-        if (!$returnRaw) {
-            $joinDefinitions = $this->_tmp['joins'];
-            $returningObjects = [];
-            $fetchedObjectsCount = count($fetchedObjects);
-            
-            for ($i = 0; $i < $fetchedObjectsCount; $i++) {
-                $fetchedObject = $fetchedObjects[$i];
-                
-                foreach ($joinDefinitions as $joinDefinition) {
-                    $parentModelName = $joinDefinition['parent_model'];
-                    $childModelName = $joinDefinition['child_model'];
-                    
-                    $parentModel = $fetchedObject->getRelatingModel($parentModelName);
-                    $childModel = $fetchedObject->getRelatingModel($childModelName);
-                    
-                    self::mapModelRelationships($parentModel, $childModel, $joinDefinition);
-                }
-                
-                $modelToAdd = $fetchedObject->getRelatingModel($selfClass);
-                if (!in_array($modelToAdd, $returningObjects)) {
-                    array_push($returningObjects, $modelToAdd);
-                }
-            }
-            
-            $fetchedObjects = $returningObjects;
-        }
-        
-		$this->_tmp = null;
-        
-		return $fetchedObjects;
-	}
-	*/
-    
 	public function update()
 	{
 		$selfName = get_called_class();
         $selfPrimaryKey = $selfName::$primaryKey;
-		$statement = 'UPDATE ' . self::$db->dbName . '.' . $selfName::$tableName . ' SET ';
-		$arguments = array();
+		$dbName = self::$db->dbName;
+        $tableName = $selfName::$tableName;
+        $statement = "UPDATE $dbName.$tableName SET ";
+		$arguments = [];
         $columns = $selfName::$columns;
 		
-		$first = true;
-		foreach ($this as $key => $value) {
-			if (preg_match('/__old_/', $key) || !array_key_exists($key, $columns) || $key === $selfPrimaryKey) {
+        $first = true;
+		foreach ($this->_attributes as $key => $value) {
+			if (!array_key_exists($key, $columns) || $key === $selfPrimaryKey) {
 				continue;
 			}
 			
-			$oldKey = "__old_$key";
-			$oldValue = $this->{$oldKey};
+			$oldValue = $this->_cachedAttributes[$key];
 			
 			if ($value != $oldValue) {
 				if ($first) {
@@ -849,24 +503,6 @@ abstract class Model extends \ArrayObject
                     $data[$relationshipName] = $childData;
                 } else {
                     if ($callingClass !== get_class($this->{$relationshipName})) {
-                        
-                        if (
-                            $callingClass === 'JStubbsCMS\Model\SectionLocation'
-                        ) {
-                            //var_dump($callingClass);
-                            //var_dump(get_class($this->{$relationshipName}));
-                            //die(__FILE__ . ':' . __LINE__);
-                        }
-                        /*
-                        var_dump($callingClass);
-                        var_dump(get_class($this->{$relationshipName}));
-                        
-                        $modelClass = get_class($this->{$relationshipName});
-                        $modelColumns = $modelClass::$columns;
-                        
-                        $data[$relationshipName] = $this->{$relationshipName};
-                        */
-                        
                         $data[$relationshipName] = $this->{$relationshipName}->toJSON(true, $selfClass);
                     }
                 }
@@ -918,46 +554,6 @@ abstract class Model extends \ArrayObject
         
         return $value;
     }
-    
-    /**
-     * Returns the relationship of the key '$relationshipName' declared in the calling model class.
-     * If 'inverse' has been set within the found relationship, an inverted relationship produced from the opposing model and returned. 
-     * @param       string      $relationshipName       The name of the relationship to return.
-     * @return      array                               The found relationship or an inverted relationship. 'null' is returned if no relationship is found.
-     */
-    /*
-    protected static function getRelationship($relationshipName)
-    {
-        $selfClass = get_called_class();
-        $relationships = $selfClass::$relationships;
-        
-        if (isset($relationships[$relationshipName])) {
-            $relationship = $relationships[$relationshipName];
-            
-            // if 'inverse' is set, calculate relationship based on other model's declaration.
-            if (isset($relationship['inverse'])) {
-                $modelClass = ClassResolver::resolve($relationship['model']);
-                $modelRelationships = $modelClass::$relationships;
-                $modelRelationship = $modelRelationships[$relationship['inverse']];
-                
-                $relationship = [
-                    'column' => isset($modelRelationship['joinColumn']) ? $modelRelationship['joinColumn'] : $modelRelationship['column'],
-                    'joinColumn' => $modelRelationship['column'],
-                    'model' => $relationship['model'],
-                    'relationship' => $selfClass::getReverseRelationshipType($modelRelationship['relationship'])
-                ];
-            }
-            
-            if (!isset($relationship['joinColumn'])) {
-                $relationship['joinColumn'] = $relationship['column'];
-            }
-            
-            return $relationship;
-        }
-        
-        return null;
-    }
-    */
     
     /**
      * The opposite value of '$relationship' is returned.
@@ -1088,15 +684,59 @@ abstract class Model extends \ArrayObject
         return $relationship;
     }
     
-	private function debug($method)
-	{
-		$backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-		$backtraceStr = "";
-		
-		if (count($backtrace) > 1)
-			$backtraceStr = $backtrace[1]['file'] . " on line " . $backtrace[1]['line'];
-		
-		$selfName = get_class($this);
-		trigger_error("$selfName cannot continue with SELECT query. Stopped at $method() - $backtraceStr", E_USER_ERROR);
-	}
+    public function __get($name)
+    {
+        $selfClass = get_class($this);
+        
+        if (isset($selfClass::$relationships[$name])) {
+            return $this->_relationships[$name];
+        }
+        
+        if (array_key_exists($name, $this->_attributes)) {
+            return $this->_attributes[$name];
+        }
+        
+        return null;
+    }
+    
+    public function __set($name, $value)
+    {
+        $isOldValue = false;
+        $selfClass = get_class($this);
+        
+        if (strstr($name, '__old_') !== false) {
+            $isOldValue = true;
+            $name = str_replace('__old_', '', $name);
+        }
+        
+        if (isset($selfClass::$columns[$name])) {
+            if ($isOldValue) {
+                $this->_cachedAttributes[$name] = $value;
+            } else {
+                $this->_attributes[$name] = $value;
+            }
+        }
+    }
+    
+    public static function getCachedModel($modelClass, $modelID)
+    {
+        if (isset(self::$_cachedModels[$modelClass]["$modelID"])) {
+            return self::$_cachedModels[$modelClass]["$modelID"];
+        }
+        
+        return null;
+    }
+    
+    public static function cacheModel(Model $model)
+    {
+        $modelClass = get_class($model);
+        $privateKey = $modelClass::$primaryKey;
+        $modelID = $model->{$privateKey};
+        
+        if (!isset(self::$_cachedModels[$modelClass])) {
+            self::$_cachedModels[$modelClass] = [];
+        }
+        
+        self::$_cachedModels[$modelClass]["$modelID"] = $model;
+    }
 }

@@ -1,8 +1,9 @@
 {
     "name": "jamesastubbs/phpmvc",
     "autoload": {
-        "psr-0": {
-            "PHPMVC": "lib"
+        "psr-4": {
+            "PHPMVC\\": "lib/"
         }
     }
 }
+ 
