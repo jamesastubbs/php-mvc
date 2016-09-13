@@ -403,6 +403,11 @@ class ModelQueryBuilder
     
     private function addModelFromRelationship(&$model, &$joinModel, $relationship, $relationshipAttribute, $reverseRelationship = null, $reverseRelationshipAttribute = null)
     {
+        $modelClass = get_class($model);
+        $modelPrimaryKey = $modelClass::$primaryKey;
+        $joinModelClass = get_class($joinModel);
+        $joinModelPrimaryKey = $joinModelClass::$primaryKey;
+        
         $this->addRelatedModelToModel($joinModel, $model, $relationshipAttribute, $relationship);
         
         if ($reverseRelationship !== null && $reverseRelationshipAttribute !== null) {

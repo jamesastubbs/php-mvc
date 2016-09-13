@@ -33,6 +33,7 @@ abstract class Model
     public static $relationships = [];
     public static $tableName;
     public static $columns;
+    private static $tmpID = 0;
     protected static $db = null;
     protected static $_cachedModels = [];
     protected static $_cacheSetup = false;
@@ -44,6 +45,7 @@ abstract class Model
         }
         
         $selfClass = get_class($this);
+        $primaryKey = $selfClass::$primaryKey;
         $columns = $selfClass::$columns;
         $relationships = $selfClass::$relationships;
         
@@ -62,6 +64,8 @@ abstract class Model
                 $this->_relationships[$relationshipName] = new ToOneRelationship($modelClass);
             }
         }
+        
+        $this->{$primaryKey} = self::getTmpID();
     }
     
     final public static function setDB($db)
@@ -70,6 +74,7 @@ abstract class Model
         $selfClass = get_called_class();
     }
     
+    /*
     final public static function getStored($id)
     {
         $model = null;
@@ -81,6 +86,7 @@ abstract class Model
         
         return $model;
     }
+    */
     
     final protected static function getDB()
     {
@@ -126,9 +132,9 @@ abstract class Model
             $relatingModelPrimaryKeyValue = "{$this->{"$relatingModelName.$relatingModelPrimaryKey"}}";
         }
         
-        if (isset(self::$_cachedModels[$relatingModelClass]) && isset(self::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue])) {
+        if (isset(Model::$_cachedModels[$relatingModelClass]) && isset(Model::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue])) {
             // if relating model has already been set up and stored, return the cached value.
-            return self::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue];
+            return Model::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue];
         }
         
         $relatingModelColumns = array_keys($relatingModelClass::$columns);
@@ -143,7 +149,7 @@ abstract class Model
             }
 		}
         
-        self::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue] = $relatingModel;
+        Model::$_cachedModels[$relatingModelClass][$relatingModelPrimaryKeyValue] = $relatingModel;
         
         return $relatingModel;
     }
@@ -257,56 +263,76 @@ abstract class Model
     
 	public function create($fetchAfter = false)
 	{
-		$selfName = get_class($this);
-        $selfPrimaryKey = $selfName::$primaryKey;
-		$statement = 'INSERT INTO ' . self::$db->dbName . ".{$selfName::$tableName} (";
+        $db = self::$db;
+		$selfClass = get_class($this);
+        $primaryKey = $selfClass::$primaryKey;
+        $selfRelationships = $selfClass::$relationships;
+        $tableName = $selfClass::$tableName;
+		$statement = "INSERT INTO {$db->dbName}.{$tableName}(";
 		$statementPart = ') VALUES (';
 		$first = true;
-		$arguments = array();
-		$columns = array_keys($selfName::$columns);
-		$columnCount = count($columns);
-        
-		for ($i = 0; $i < $columnCount; $i++) {
-			$key = $columns[$i];
+		$arguments = [];
+		
+        foreach ($this->_relationships as $relationshipName => $relationship) {
+            if (!isset($selfRelationships[$relationshipName])) {
+                throw new \Exception("A relationship with the name of '$relationshipName' was not defined in the mode of '$selfClass'.");
+            }
             
-			if (array_key_exists($key, $this)) {
-				$value = $this->{$key};
-				if ($first) {
-					$first = false;
-				} else {
-					$statement .= ', ';
-					$statementPart .= ', ';
-				}
-				
-				$statement .= $key;
-				$statementPart .= '?';
-				array_push($arguments, $value);
-				
-                if ($key !== $selfPrimaryKey) {
-                    $this->_cachedAttributes[$key] = $value;
+            $relationshipDefinition = $selfClass::getRelationship($relationshipName);
+            $type = $relationshipDefinition['relationship'];
+            
+            if ($type === self::RELATIONSHIP_MANY_TO_ONE || $type === self::RELATIONSHIP_ONE_TO_ONE) {
+                $relatedModel = $relationship->get();
+                
+                // TODO: implement support for optional relationships.
+                if ($relatedModel !== null) {
+                    $joinKey = $relationshipDefinition['column'];
+                    $foreignKey = isset($relationshipDefinition['joinColumn']) ? $relationshipDefinition['joinColumn'] : $relationshipDefinition['column'];
+                    
+                    $this->_attributes[$foreignKey] = $relatedModel->{$joinKey};
                 }
-				
-				unset($columns[$i]);
+            }
+        }
+        
+		foreach ($this->_attributes as $key => $value) {
+            if ($key === $primaryKey || $value === null) {
+                continue;
+            }
+            
+			if ($first) {
+				$first = false;
+			} else {
+				$statement .= ', ';
+				$statementPart .= ', ';
 			}
+			
+            $statement .= $key;
+			$statementPart .= '?';
+            
+			$arguments[] = $selfClass::getColumnValue($key, $value);
 		}
 		
 		$statement .= $statementPart . ');';
 		
-		$lastInsertId = self::$db->query($statement, ((bool)count($arguments) ? $arguments : null));
-		$this->{$selfPrimaryKey} = $lastInsertId;
-		
-		if ($fetchAfter && count($columns)) {
+		$lastInsertId = self::$db->query($statement, !empty($arguments) ? $arguments : null);
+		$this->{$primaryKey} = $lastInsertId;
+        
+		if ($fetchAfter && !empty($columns)) {
 			$statement = 'SELECT ';
 			$isFirst = true;
+            
 			foreach ($columns as $column) {
-				if ($isFirst)
+				if ($isFirst) {
 					$isFirst = false;
-				else
+				} else {
 					$statement .= ', ';
+                }
+                
 				$statement .= $column;
 			}
-			$statement .= " FROM {$selfName::$tableName} WHERE {$selfPrimaryKey} = ? LIMIT 1";
-			$result = self::$db->query($statement, $this->{$selfPrimaryKey});
+            
+			$statement .= " FROM $tableName WHERE $primaryKey = ? LIMIT 1";
+			$result = $db->query($statement, $this->{$primaryKey});
 			
 			if (empty($result)) {
 				return false;
@@ -322,7 +348,9 @@ abstract class Model
 			}
 		}
 		
-		return (bool)$this->{$selfPrimaryKey};
+        Model::cacheModel($this);
+        
+		return (bool)$this->{$primaryKey};
 	}
 	
 	public static function select(ModelPredicate $predicate = null)
@@ -404,17 +432,19 @@ abstract class Model
 	
 	public function update()
 	{
-		$selfName = get_called_class();
-        $selfPrimaryKey = $selfName::$primaryKey;
-		$dbName = self::$db->dbName;
-        $tableName = $selfName::$tableName;
+		$selfClass = get_called_class();
+        $primaryKey = $selfClass::$primaryKey;
+        $db = self::$db;
+		$dbName = $db->dbName;
+        $tableName = $selfClass::$tableName;
         $statement = "UPDATE $dbName.$tableName SET ";
 		$arguments = [];
-        $columns = $selfName::$columns;
+        $columns = $selfClass::$columns;
 		
         $first = true;
+        
 		foreach ($this->_attributes as $key => $value) {
-			if (!array_key_exists($key, $columns) || $key === $selfPrimaryKey) {
+			if (!array_key_exists($key, $columns) || $key === $primaryKey) {
 				continue;
 			}
 			
@@ -427,16 +457,17 @@ abstract class Model
 					$statement .= ', ';
                 }
                 
-                $value = self::getColumnValue($key, $value);
+                $value = $selfClass::getColumnValue($key, $value);
                 $this->{$key} = $value;
 				$statement .= "$key = ?";
-				array_push($arguments, $value);
+				$arguments[] = $value;
 			}
 		}
 		
-		if (count($arguments) > 0) {
-			$statement .= " WHERE $selfPrimaryKey = " . $this->{$selfPrimaryKey};
-            $result = call_user_func_array([self::$db, 'query'], [$statement, $arguments]);
+		if (!empty($arguments)) {
+			$statement .= " WHERE $primaryKey = " . $this->{$primaryKey};
+            
+            $result = call_user_func_array([$db, 'query'], [$statement, $arguments]);
             
 			return $result;
 		}
@@ -484,27 +515,21 @@ abstract class Model
             $data[$column] = $this->{$column};
         }
         
-        foreach ($relationshipNames as $relationshipName) {
-            $relationship = $selfClass::getRelationship($relationshipName);
-            
-            if (isset($this->{$relationshipName})) {
-                if ($relationship['relationship'] === self::RELATIONSHIP_ONE_TO_MANY || $relationship['relationship'] === self::RELATIONSHIP_MANY_TO_MANY) {
-                    $childData = [];
-                    $childModels = $this->{$relationshipName};
-                    
-                    foreach ($childModels as $childModel) {
-                        if ($callingClass === get_class($childModel)) {
-                            continue;
-                        }
-                        
-                        $childData[] = $childModel->toJSON(true, $selfClass);
-                    }
-                    
-                    $data[$relationshipName] = $childData;
-                } else {
-                    if ($callingClass !== get_class($this->{$relationshipName})) {
-                        $data[$relationshipName] = $this->{$relationshipName}->toJSON(true, $selfClass);
-                    }
+        foreach ($this->_relationships as $relationshipName => $relationship) {
+            if (get_class($relationship) === 'PHPMVC\\Foundation\\Model\\Relationship\\ToManyRelationship') {
+                $childData = [];
+                $models = $relationship->getAll();
+                
+                foreach ($models as $model) {
+                    $childData[] = $model->toJSON(true, $callingClass);
+                }
+                
+                $data[$relationshipName] = $childData;
+            } else {
+                $model = $relationship->get();
+                
+                if ($callingClass !== get_class($model)) {
+                    $data[$relationshipName] = $model->toJSON(true, $selfClass);
                 }
             }
         }
@@ -518,14 +543,22 @@ abstract class Model
     
     /**
      * Converts '$value' into a safe database value for the column we're about to insert the data into.
+     *
      * @param   string  $columnName     The key to get the type of column from 'self::$columns'.
      * @param   mixed   $value          The value to be converted.
+     *
      * @return  mixed                   The value converted to the type of column declared.
      */
     protected static function getColumnValue($columnName, $value, $toDatabase = true)
     {
         $selfClass = get_called_class();
         $columns = $selfClass::$columns;
+        
+        if ($columns === null) {
+            var_dump($columns);
+            var_dump($selfClass);
+            die(__FILE__ . ':' . __LINE__);
+        }
         
         if (array_key_exists($columnName, $columns)) {
             $columnType = $columns[$columnName];
@@ -543,6 +576,7 @@ abstract class Model
                     if ($toDatabase) {
                         $value = $value ? 1 : 0;
                     }
+                    
                     break;
                 case self::COLUMN_DATE:
                     // TODO: convert possible date format into UTC timestamp.
@@ -720,8 +754,8 @@ abstract class Model
     
     public static function getCachedModel($modelClass, $modelID)
     {
-        if (isset(self::$_cachedModels[$modelClass]["$modelID"])) {
-            return self::$_cachedModels[$modelClass]["$modelID"];
+        if (isset(Model::$_cachedModels[$modelClass]["$modelID"])) {
+            return Model::$_cachedModels[$modelClass]["$modelID"];
         }
         
         return null;
@@ -733,10 +767,17 @@ abstract class Model
         $privateKey = $modelClass::$primaryKey;
         $modelID = $model->{$privateKey};
         
-        if (!isset(self::$_cachedModels[$modelClass])) {
-            self::$_cachedModels[$modelClass] = [];
+        if (!isset(Model::$_cachedModels[$modelClass])) {
+            Model::$_cachedModels[$modelClass] = [];
         }
         
-        self::$_cachedModels[$modelClass]["$modelID"] = $model;
+        Model::$_cachedModels[$modelClass]["$modelID"] = $model;
+    }
+    
+    protected static function getTmpID()
+    {
+        Model::$tmpID--;
+        
+        return Model::$tmpID;
     }
 }
