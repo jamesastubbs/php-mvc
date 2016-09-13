@@ -17,7 +17,11 @@ class ToManyRelationship extends Relationship
         
         $primaryKey = $this->primaryKey;
         
-        $this->storage[] = $model->{$primaryKey};
+        if (!in_array($model->{$primaryKey}, $this->storage)) {
+            $this->storage[] = $model->{$primaryKey};
+        }
+        
+        Model::cacheModel($model);
         
         return $this;
     }
