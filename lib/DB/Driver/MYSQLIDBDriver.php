@@ -24,6 +24,8 @@ class MYSQLIDBDriver extends DBDriver
     
     private function setupConnection($config)
     {
+        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        
         $this->connection = new \mysqli($config->DB_HOST, $config->DB_USER, $config->DB_PASS, $config->DB_NAME); 
         
         if ($this->connection->connect_error === null) {
@@ -68,23 +70,20 @@ class MYSQLIDBDriver extends DBDriver
 			$_values = array();
 			
 			for ($i = 0; $i < count($values); $i++) {
-				if ($values[$i] === null)
-					continue;
-				else {
-					$value = $values[$i];
-					$type = "b";
-					$valueType = gettype($value);
-					
-					if ($valueType == "string")
-						$type = "s";
-					else if ($valueType == "integer" || $valueType == "boolean")
-						$type = "i";
-					else if ($valueType == "double")
-						$type = "d";
-
-					$bindTypes .= $type;
-				}
-				$_values[$i] = &$values[$i];
+				$value = $values[$i];
+				$type = "b";
+				$valueType = gettype($value);
+				
+                if ($valueType == "string") {
+					$type = "s";
+				} else if ($valueType == "integer" || $valueType == "boolean") {
+					$type = "i";
+				} else if ($valueType == "double") {
+					$type = "d";
+                }
+                
+                $bindTypes .= $type;
+                $_values[$i] = &$values[$i];
 			}
             
 			call_user_func_array(array($query, "bind_param"), array_merge(array($bindTypes), $_values));
