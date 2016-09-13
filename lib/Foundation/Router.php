@@ -190,9 +190,19 @@ class Router
                             $_action = 'index';
                         }
                         
-                        $reflectionMethod = new \ReflectionMethod($__controller, $_action);
+                        $continue = false;
                         
-                        if (!$reflectionMethod->isPublic()) {
+                        try {
+                            $reflectionMethod = new \ReflectionMethod($__controller, $_action);
+                            
+                            if (!$reflectionMethod->isPublic()) {
+                                $continue = true;
+                            }
+                        } catch (\Exception $e) {
+                            $continue = true;
+                        }
+                        
+                        if ($continue) {
                             continue;
                         }
                         
