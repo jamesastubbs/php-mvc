@@ -196,8 +196,17 @@ abstract class Controller
 		}
         
         $selfClass = get_called_class();
-		$selfNameParts = explode('\\', $selfClass);
-        $selfName = array_pop($selfNameParts);
+        $selfName = '';
+        $selfNameParts = null;
+        
+        $setSelfName = function ($selfClass) use (&$selfNameParts, &$selfName) {
+            if ($selfClass !== false) {
+                $selfNameParts = explode('\\', $selfClass);
+                $selfName = array_pop($selfNameParts);
+            }
+        };
+        
+        $setSelfName($selfClass);
         
         // default prefix set as the namespace of the calling class.
         if (strpos($view, ':') === false) {
@@ -224,7 +233,20 @@ abstract class Controller
                 $this->viewHeader($prefix, $data);
             }
             
-            include realpath($viewPath . '/' . ucfirst(str_replace('Controller', '', $selfName)) . '/' . $view . '.php');
+            $includePath = realpath($viewPath . '/' . ucfirst(str_replace('Controller', '', $selfName)) . '/' . $view . '.php');
+            
+            while ($selfClass !== false && !file_exists($includePath)) {
+                $selfClass = get_parent_class($selfClass);
+                $setSelfName($selfClass);
+                
+                $includePath = realpath($viewPath . '/' . ucfirst(str_replace('Controller', '', $selfName)) . '/' . $view . '.php');
+            }
+            
+            if ($selfClass === false) {
+                throw new \Exception("View not found for '$view'.");
+            }
+            
+            include $includePath;
             
             if ($viewTemplate) {
 				$this->viewFooter($prefix, $data);
