@@ -579,7 +579,11 @@ abstract class Model
                     
                     break;
                 case self::COLUMN_DATE:
-                    // TODO: convert possible date format into UTC timestamp.
+                    if ($toDatabase) {
+                        $value = $value->format('Y-m-d H:i:s');
+                    } else {
+                        $value = \DateTime::createFromFormat('Y-m-d H:i:s', $value);
+                    }
                     break;
                 default:
                     break;
