@@ -549,7 +549,7 @@ abstract class Model
      *
      * @return  mixed                   The value converted to the type of column declared.
      */
-    protected static function getColumnValue($columnName, $value, $toDatabase = true)
+    public static function getColumnValue($columnName, $value, $toDatabase = true)
     {
         $selfClass = get_called_class();
         $columns = $selfClass::$columns;

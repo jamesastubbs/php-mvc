@@ -325,7 +325,7 @@ class ModelQueryBuilder
                             $key = "{$alias}_{$column}";
                             
                             if (array_key_exists($key, $fetchedRow)) {
-                                $value = $fetchedRow[$key];
+                                $value = $modelClass::getColumnValue($column, $fetchedRow[$key], false);
                                 $model->{$column} = $value;
                                 
                                 if ($column !== $primaryKey) {
