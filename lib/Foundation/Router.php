@@ -191,11 +191,20 @@ class Router
                         }
                         
                         $continue = false;
+                        $_parametersLength = count($_parameters);
                         
                         try {
                             $reflectionMethod = new \ReflectionMethod($__controller, $_action);
                             
                             if (!$reflectionMethod->isPublic()) {
+                                $continue = true;
+                            }
+                            
+                            $reflectionParameters = array_filter($reflectionMethod->getParameters(), function ($reflectionParameter) {
+                                return !$reflectionParameter->isOptional();
+                            });
+                            
+                            if (count($reflectionParameters) > $_parametersLength) {
                                 $continue = true;
                             }
                         } catch (\Exception $e) {
