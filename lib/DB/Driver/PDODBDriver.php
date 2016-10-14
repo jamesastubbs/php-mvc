@@ -6,7 +6,9 @@
  * @version 1.0
  */
 
-namespace \PHPMVC\DBDriver;
+namespace PHPMVC\DB\Driver;
+
+use PDO;
 
 class PDODBDriver extends DBDriver
 {
@@ -32,7 +34,7 @@ class PDODBDriver extends DBDriver
 			while ($i < strlen($statement)) {
 				if ($statement[$i] == "?") {
 					//echo $i . "<br />";
-					$numberWord = convertNumber($tempNumber);
+					$numberWord = (new \PHPMVC\_inc\NumberConverter)->numberToWords($tempNumber);
 					while (true) {
 						if (preg_match("/(" . $numberWord . ")/", $statement)) {
 							$tempNumber++;

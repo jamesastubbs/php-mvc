@@ -146,7 +146,7 @@ abstract class Controller
 		$this->viewFunction($view, $data, $this->viewTemplate, $viewPath);
 	}
     
-    private function viewJSON($data)
+    protected function viewJSON($data)
     {
         $jsonOption = filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN) ? JSON_PRETTY_PRINT : 0;
         error_reporting(0);
@@ -341,11 +341,6 @@ abstract class Controller
 	
     private function getViewPath($prefix = null)
     {
-        // get root directory from Application class.
-        if (self::$rootDir === null) {
-            self::$rootDir = Application::getConfigValue('ROOT');
-        }
-        
         // get the autoloader to resolve 
         global $loader;
         $prefixes = array_merge($loader->getPrefixes(), $loader->getPrefixesPsr4());
@@ -377,6 +372,16 @@ abstract class Controller
         $viewPath = realpath($prefixDir . '/View');
         
         return $viewPath;
+    }
+    
+    protected function getRoot()
+    {
+        // get root directory from Application class.
+        if (self::$rootDir === null) {
+            self::$rootDir = Application::getConfigValue('ROOT');
+        }
+        
+        return self::$rootDir;
     }
     
 	private function getTemplatePath($prefix = null, $specificFile = null)

@@ -60,41 +60,37 @@ class MYSQLIDBDriver extends DBDriver
             throw new \Exception('Query error.');
 		}
 		
-		//die(var_dump($values));
+		$bindTypes = '';
 		
-		$bindTypes = "";
-		
-		if (isset($values) && count($values)) {
-			$bindTypes = "";
-			
-			$_values = array();
+		if (isset($values) && !empty($values)) {
+			$_values = [];
 			
 			for ($i = 0; $i < count($values); $i++) {
 				$value = $values[$i];
-				$type = "b";
+				$type = 'b';
 				$valueType = gettype($value);
 				
-                if ($valueType == "string") {
-					$type = "s";
-				} else if ($valueType == "integer" || $valueType == "boolean") {
-					$type = "i";
-				} else if ($valueType == "double") {
-					$type = "d";
+                if ($valueType == 'string') {
+					$type = 's';
+				} else if ($valueType == 'integer' || $valueType == 'boolean') {
+					$type = 'i';
+				} else if ($valueType == 'double') {
+					$type = 'd';
                 }
                 
                 $bindTypes .= $type;
                 $_values[$i] = &$values[$i];
 			}
             
-			call_user_func_array(array($query, "bind_param"), array_merge(array($bindTypes), $_values));
+			call_user_func_array(array($query, 'bind_param'), array_merge(array($bindTypes), $_values));
 		}
 		
 		if (!$query->execute()) {
-			Application::log("MySQLi error: " . $query->error . " - query: " . $this->debugQuery($statement, $values), 2);
+			Application::log("MySQLi error: {$query->error} - query: {$this->debugQuery($statement, $values)}", 2);
 			
 			if (filter_var(DEBUG, FILTER_VALIDATE_BOOLEAN)) {
 				$backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-				$backtraceStr = "";
+				$backtraceStr = '';
 				
 				if (count($backtrace) > 1)
 					$backtraceStr = $backtrace[1]['file'] . " on line " . $backtrace[1]['line'];
@@ -119,10 +115,11 @@ class MYSQLIDBDriver extends DBDriver
 		
 		switch (explode(" ", trim($statement))[0]) {
 			case "SELECT": {
-				$result = array();
+				$result = [];
 				$queryResult = $query->get_result();
+                
 				while ($row = $queryResult->fetch_array(MYSQLI_ASSOC)) {
-					array_push($result, $row);
+					$result[] = $row;
 				}
 			}
 			break;

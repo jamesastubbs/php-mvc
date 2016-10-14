@@ -78,7 +78,7 @@ class Router
                 }
                 
                 // retrieve all route parts, so that we can build continue to build the route URL.
-                $routePath = preg_replace_callback('/\{([A-Za-z0-9_]+)(?:\:[ |](?:\'([^\'\\\]*(?:\\.[^\'\\\]*)*)\'))?\}/', function ($matches) use (&$parameters, &$routePathI, &$routePathReplacements) {
+                $routePath = preg_replace_callback('/\{([A-Za-z0-9_]+)(?:\:(?:\ )?(?:\'([^\']*(?:\.[^\']*)*)\'))?\}/', function ($matches) use (&$parameters, &$routePathI, &$routePathReplacements) {
                     $variable = $matches[1];
                     $regex = '(' . (isset($matches[2]) ? $matches[2] : '[A-Za-z0-9_]+') . ')';
                     
