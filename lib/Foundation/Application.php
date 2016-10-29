@@ -56,13 +56,7 @@ class Application
     
         session_start();
         
-        $routesPath = self::$configPath . '/routes.json';
-        
-        if (file_exists($routesPath)) {
-            $jsonString = file_get_contents($routesPath);
-            $routes = json_decode($jsonString, true);
-            $this->router = new Router($__config['NAME'], $routes);
-        }
+        $this->router = new Router($__config['NAME'], $__config['ROOT'], $__config['LOADER']->getPrefixes());
         
 		if (!$this->matchRoute()) {
             $message = 'Cannot match any route.';

@@ -5,19 +5,51 @@ namespace PHPMVC\Foundation;
 class Router
 {
     private $name = null;
+    private $namespaces = null;
+    private $rootPath = null;
     private $routes = [];
     private $baseRoutes = [];
     
-    public function __construct($name, array $routes)
+    public function __construct($name, $rootPath, array $namespaces)
     {
         $this->name = $name;
+        $this->namespaces = $namespaces;
+        $this->rootPath = $rootPath;
         
+        $routesPath = "$rootPath/config/routes.json";
+        
+        $this->processRoutesFromPath($routesPath);
+    }
+    
+    private function processRoutesFromPath($path)
+    {
+        if (!file_exists($path)) {
+            throw new \Exception("Config file '$path' not found.");
+        }
+        
+        $jsonString = file_get_contents($path);
+        $routes = json_decode($jsonString, true);
+        
+        $this->processRoutes($routes);
+    }
+    
+    private function processRoutes(array $routes)
+    {
         foreach ($routes as $routePath => $route) {
             if (preg_match('/^@.+/', $route)) {
                 switch (str_replace('@', '', $route)) {
                     case 'default':
                         $this->baseRoutes[] = explode(':', $routePath)[0];
                         break;
+                    case 'import':
+                        $namespace = explode(':', $routePath)[0];
+                        
+                        if (!isset($this->namespaces[$namespace])) {
+                            throw new \Exception("Namespace '$namespace' not found.");
+                        }
+                        
+                        $path = current($this->namespaces[$namespace]) . '/../config/routes.json';
+                        $this->processRoutesFromPath($path);
                     default:
                         break;
                 }
