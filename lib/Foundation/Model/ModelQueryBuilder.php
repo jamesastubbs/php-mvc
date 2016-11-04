@@ -2,6 +2,7 @@
 
 namespace PHPMVC\Foundation\Model;
 
+use PHPMVC\Foundation\Exception\QueryException;
 use PHPMVC\Foundation\Model\ClassResolver;
 use PHPMVC\Foundation\Model\Model;
 use PHPMVC\Foundation\Model\Relationship\ToManyRelationship;
@@ -286,7 +287,13 @@ class ModelQueryBuilder
         
         // execute query.
         $result = null;
-        $fetchedData = $db->query($sql, $whereArguments);
+        $fetchedData = null;
+        
+        try {
+            $fetchedData = $db->query($sql, $whereArguments);
+        } catch (QueryException $e) {
+            throw $e;
+        }
         
         if (is_array($fetchedData)) {
             // initalise return object now we have deemed the response to be successful.

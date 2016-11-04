@@ -10,6 +10,7 @@ namespace PHPMVC\DB\Driver;
 
 use PHPMVC\DB\Driver\DBDriver;
 use PHPMVC\Foundation\Application;
+use PHPMVC\Foundation\Exception\QueryException;
 
 class MYSQLIDBDriver extends DBDriver
 {
@@ -39,8 +40,15 @@ class MYSQLIDBDriver extends DBDriver
 	}
 
 	public function query($statement, $values)
-	{        
-		$query = $this->connection->prepare($statement);
+	{
+        try {
+            $query = $this->connection->prepare($statement);
+        } catch (\mysqli_sql_exception $e) {
+            $qe = new QueryException('Failed to execute query - ' . $e->getMessage());
+            $qe->setSQLWithParameters($statement, $values);
+            
+            throw $qe;
+        }
 
 		if (!$query) {
             Application::log("MySQLi error: " . $this->connection->error . " - query: " . $this->debugQuery($statement, $values));

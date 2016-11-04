@@ -230,7 +230,7 @@ class Application
 	{
         $url = isset($_GET['url']) ? $_GET['url'] : '/';
         $url = rtrim($url, '/');
-        $url = filter_var($url, FILTER_SANITIZE_URL);
+        //$url = filter_var($url, FILTER_SANITIZE_URL);
         
         $result = $this->router->matchRoute($url, $controller, $action, $parameters);
         
