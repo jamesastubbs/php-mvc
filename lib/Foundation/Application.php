@@ -56,7 +56,18 @@ class Application
     
         session_start();
         
-        $this->router = new Router($__config['NAME'], $__config['ROOT'], $__config['LOADER']->getPrefixes());
+        $namespaces = $__config['LOADER']->getPrefixesPsr4();
+        $namespacesKeys = array_keys($namespaces);
+        
+        array_walk($namespacesKeys, function($key) use (&$namespaces) {
+            $namespaces[rtrim($key, '\\')] = $namespaces[$key];
+            
+            unset($namespaces[$key]);
+        });
+        
+        unset($namespacesKeys);
+        
+        $this->router = new Router($__config['NAME'], $__config['ROOT'], $namespaces);
         
 		if (!$this->matchRoute()) {
             $message = 'Cannot match any route.';
