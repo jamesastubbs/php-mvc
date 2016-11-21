@@ -126,7 +126,7 @@ class Application
         
         if ($exceptionClass === NotFoundException::class) {
             $controller->viewError(404);
-        } else if ($exceptionClass === NotFoundException::class) {
+        } else if ($exceptionClass !== NotFoundException::class) {
             $controller->viewError(500);
         }
     }

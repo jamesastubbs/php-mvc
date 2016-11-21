@@ -168,6 +168,7 @@ class Router
             $action = $route['action'];
             $parameters = [];
             
+            $urlMatchesI = 0;
             $routeParameters = $route['parameters'];
             $routeParametersOrder = $routeParameters['__order'];
             $routeParametersCount = count($routeParametersOrder);
@@ -179,7 +180,8 @@ class Router
                 // if the parameter is null,
                 // add in the value from the received URL match.
                 if ($routeParameter === null) {
-                    $routeParameter = $urlMatches[$i][0];
+                    $routeParameter = $urlMatches[$urlMatchesI][0];
+                    $urlMatchesI++;
                 }
                 
                 // add the parameter.
