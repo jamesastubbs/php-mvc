@@ -195,68 +195,134 @@ abstract class Controller
             }
 		}
         
+        $self = &$this;
         $selfClass = get_called_class();
-        $selfName = '';
-        $selfNameParts = null;
         
-        $setSelfName = function ($selfClass) use (&$selfNameParts, &$selfName) {
+        $extractPrefix = function (&$viewStr, $rebuildStr = true) {
+            $viewParts = explode(':', $viewStr);
+            $prefix = array_shift($viewParts);
+            
+            if ($rebuildStr) {
+                $viewStr = array_pop($viewParts);
+            }
+            
+            return $prefix;
+        };
+        
+        // function to set the Controller class name.
+        // we this, so that sub classed Controllers can use parent-owned views.
+        $setSelfName = function (&$selfName, $selfClass, &$selfNameParts = null) {
             if ($selfClass !== false) {
                 $selfNameParts = explode('\\', $selfClass);
                 $selfName = array_pop($selfNameParts);
+                
+                // memory management.
+                unset($selfNameParts);
             }
         };
         
-        $setSelfName($selfClass);
-        
-        // default prefix set as the namespace of the calling class.
-        if (strpos($view, ':') === false) {
-            $selfPrefix = array_shift($selfNameParts);
-            $view = $selfPrefix . ':' . $view;
-        }
-        
-        $viewParts = explode(':', $view);
-        $prefix = array_shift($viewParts);
-        $view = array_pop($viewParts);
-        
-        if ($view === '') {
-            throw new \Exception('View name cannot be blank.');
-        }
-        
-        $viewPath = $this->getViewPath($prefix);
-        
-        if (file_exists($viewPath)) {
-            if ($outputStr !== null) {
-                ob_start();
+        $includeFunction = function ($view, array $data) use ($extractPrefix, $self, $selfClass, $setSelfName) {
+            // get the calling Controller class name.
+            $selfName = '';
+            
+            // set the default calling class name.
+            $setSelfName($selfName, $selfClass, $selfNameParts);
+            
+            // default prefix set as the namespace of the calling class.
+            if (strpos($view, ':') === false) {
+                $selfPrefix = array_shift($selfNameParts);
+                $view = "$selfPrefix:$view";
             }
             
-			if ($viewTemplate) {
-                $this->viewHeader($prefix, $data);
+            // grab the prefix from the view string.
+            $prefix = $extractPrefix($view);
+            
+            // throw an exception if the view string is blank.
+            if ($view === '') {
+                throw new \Exception('View name cannot be blank.');
             }
             
-            $includePath = realpath($viewPath . '/' . ucfirst(str_replace('Controller', '', $selfName)) . '/' . $view . '.php');
+            // get the base view file path.
+            $rootViewPath = $self->getViewPath($prefix);
             
+            // throw an exception as the base view path cannot be found.
+            if (!file_exists($rootViewPath)) {
+                throw new \Exception("View for path: '$rootViewPath' not found.");
+            }
+            
+            // set up initial view file path.
+            $includePath = realpath("$rootViewPath/" . ucfirst(str_replace('Controller', '', $selfName)) . "/$view.php");
+            
+            // iterate until next available view file exists.
+            // we start with the calling class and work our way throught the parent classes.
+            // this enables the controller to inherit parent views.
             while ($selfClass !== false && !file_exists($includePath)) {
                 $selfClass = get_parent_class($selfClass);
-                $setSelfName($selfClass);
+                $setSelfName($selfName, $selfClass);
                 
-                $includePath = realpath($viewPath . '/' . ucfirst(str_replace('Controller', '', $selfName)) . '/' . $view . '.php');
+                $includePath = realpath("$rootViewPath/" . ucfirst(str_replace('Controller', '', $selfName)) . "/$view.php");
             }
             
+            // if '$selfClass' is false,
+            // that means the calling controller or any of it's relatives do not hold the requested view file,
+            // so throw an exception.
             if ($selfClass === false) {
                 throw new \Exception("View not found for '$view'.");
             }
             
-            include $includePath;
+            // anonymous function keeps visibility to current variables and values to a minimum.
+            $include = function () use ($includePath, $data) {
+                include $includePath;
+            };
+            $include();
+        };
+        
+        $data['include'] = function ($view, $viewData = []) use (&$data, &$includeFunction) {
+            $viewData = array_merge($data, $viewData);
             
-            if ($viewTemplate) {
-				$this->viewFooter($prefix, $data);
+            $includeFunction($view, $viewData);
+        };
+        
+        // if the calling controller is requiring a string output,
+        // start the output buffer.
+        if ($outputStr !== null) {
+            ob_start();
+        }
+        
+        // can be used by two separate 'if' statements,
+        // if the template has been requested.
+        $prefix = null;
+        
+        if ($viewTemplate) {
+            // if there is no prefix in the '$view' string,
+            // then get the calling class name and set that as the prefix.
+            if (strpos($view, ':') === false) {
+                // get the default calling class name.
+                $selfName = '';
+                $setSelfName($selfName, $selfClass, $selfNameParts);
+                
+                // rebuild the '$view' string with the new prefix value.
+                $prefix = array_shift($selfNameParts);
+                $view = "$prefix:$view";
+            } else {
+                // else, retrieve the prefix from the string.
+                $prefix = $extractPrefix($view, false);
             }
             
-            if ($outputStr !== null) {
-                $outputStr .= ob_get_clean();
-            }
-		} else {
-            throw new \Exception("View for path: '$viewPath' not found.");
+            $this->viewHeader($prefix, $data);
+        }
+        
+        // include the called view.
+        $includeFunction($view, $data);
+        
+        if ($viewTemplate) {
+            $this->viewFooter($prefix, $data);
+        }
+        
+        // if we have started the output buffer,
+        // stop it, grab the value and then clean up.
+        if ($outputStr !== null) {
+            $outputStr .= ob_get_clean();
         }
     }
     
@@ -265,7 +331,7 @@ abstract class Controller
         $path = $this->getTemplatePath($prefix, 'header');
         
         if ($path !== null) {
-            $path = $path . '/header.php';
+            $path = "$path/header.php";
             
             include $path;
         }
@@ -276,7 +342,7 @@ abstract class Controller
         $path = $this->getTemplatePath($prefix, 'footer');
         
         if ($path !== null) {
-            $path = $path . '/footer.php';
+            $path = "$path/footer.php";
             
             include $path;
         }
@@ -355,7 +421,7 @@ abstract class Controller
                 unset($prefixes[$name]);
             }
         }
-                
+        
         // set the default prefix to the name of the hosting application.
         if ($prefix === null) {
             $prefix = Application::getConfigValue('NAME');
