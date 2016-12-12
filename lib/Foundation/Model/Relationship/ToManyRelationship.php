@@ -88,4 +88,14 @@ class ToManyRelationship extends Relationship
         
         return $result;
     }
+    
+    public function count()
+    {
+        return count($this->storage);
+    }
+    
+    public function isEmpty()
+    {
+        return empty($this->storage);
+    }
 }
