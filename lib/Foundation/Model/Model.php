@@ -516,7 +516,7 @@ abstract class Model
         }
         
         foreach ($this->_relationships as $relationshipName => $relationship) {
-            if (get_class($relationship) === 'PHPMVC\\Foundation\\Model\\Relationship\\ToManyRelationship') {
+            if (get_class($relationship) === ToManyRelationship::class) {
                 $childData = [];
                 $models = $relationship->getAll();
                 
@@ -528,7 +528,7 @@ abstract class Model
             } else {
                 $model = $relationship->get();
                 
-                if ($callingClass !== get_class($model)) {
+                if ($model !== null && $callingClass !== get_class($model)) {
                     $data[$relationshipName] = $model->toJSON(true, $selfClass);
                 }
             }
