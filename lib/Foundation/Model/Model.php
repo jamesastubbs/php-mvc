@@ -501,43 +501,82 @@ abstract class Model
 		return array_keys($columns);
 	}
     
-    public function toJSON($outputObjects = false, $callingClass = null)
+    /**
+     * Returns a JSON formatted value of the model together with it's relating models.
+     * By default, the returning value is a JSON string of the model unless '$outputObjects' has been set accordingly.
+     *
+     * @param   boolean     $outputObjects      'true' if we want the returning value not to be an encoded JSON string.
+     * @param   array       $outputLog          Used internally to avoid infinate recursive calls. Should never be manually set.
+     *
+     * @return  mixed       The JSON result.
+     */
+    public function toJSON($outputObjects = false, &$outputLog = [])
     {
+        // set up variables and retrieve model columns.
+        // $callingClass = get_class($callingModel);
         $data = [];
-        
+        $outputRelationships = true;
         $selfClass = get_class($this);
-        
-        $callingClass = $callingClass ?: $selfClass;
+        $primaryKeyValue = $this->{$selfClass::$primaryKey};
+        $selfClass = get_class($this);
         $columns = array_keys($selfClass::$columns);
-        $relationshipNames = array_keys($selfClass::$relationships);
         
+        // set up an array for the current calling class if it doesn't exist in the output log.
+        if (!isset($outputLog[$selfClass])) {
+            $outputLog[$selfClass] = [];
+        }
+        
+        // if the ID of the current model exists in the log...
+        if (in_array($primaryKeyValue, $outputLog[$selfClass])) {
+            // ... do not recursively call this function again for the relationships
+            // as this will result in an infinate callback.
+            $outputRelationships = false;
+        } else {
+            // otherwise, add the ID to the log as this indicates the relating models will use the recursive callback.
+            $outputLog[$selfClass][] = $primaryKeyValue;
+        }
+        
+        // iterate through each of the model's columns and add the associated values to '$data'.
         foreach ($columns as $column) {
             $data[$column] = $this->{$column};
         }
         
-        foreach ($this->_relationships as $relationshipName => $relationship) {
-            if (get_class($relationship) === ToManyRelationship::class) {
-                $childData = [];
-                $models = $relationship->getAll();
-                
-                foreach ($models as $model) {
-                    $childData[] = $model->toJSON(true, $callingClass);
-                }
-                
-                $data[$relationshipName] = $childData;
-            } else {
-                $model = $relationship->get();
-                
-                if ($model !== null && $callingClass !== get_class($model)) {
-                    $data[$relationshipName] = $model->toJSON(true, $selfClass);
+        // check to see if we have marked the current model to output it's relationships.
+        if ($outputRelationships) {
+            // iterate through the current model's relationships and get the JSON values from the relating models.
+            // append the JSON data to '$data'.
+            foreach ($this->_relationships as $relationshipName => $relationship) {
+                if (get_class($relationship) === ToManyRelationship::class) {
+                    $childData = [];
+                    $models = $relationship->getAll();
+                    
+                    foreach ($models as $model) {
+                        $childData[] = $model->toJSON(true, $outputLog);
+                    }
+                    
+                    $data[$relationshipName] = $childData;
+                } else {
+                    $model = $relationship->get();
+                    
+                    if ($model !== null) {
+                        $modelClass = get_class($model);
+                        $modelPrimaryKeyValue = $modelClass::$primaryKey;
+                        
+                        if (!isset($outputLog[$modelClass]) || !in_array($modelPrimaryKeyValue, $outputLog[$modelClass])) {
+                            $data[$relationshipName] = $model->toJSON(true, $outputLog);
+                        }
+                    }
                 }
             }
         }
         
+        // if we have told the function not to encode the data,
+        // return the data as is.
         if ($outputObjects) {
             return $data;
         }
         
+        // otherwise, encode the data and return the resulting strong.
         return json_encode($data, Application::getConfigValue('DEBUG') ? JSON_PRETTY_PRINT : 0);
     }
     
