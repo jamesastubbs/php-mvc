@@ -11,6 +11,7 @@ use PHPMVC\Foundation\Model\Relationship\ToOneRelationship;
 class ModelQueryBuilder
 {
     const ALIAS_KEY = 'alias';
+    const COLUMN_KEY = 'column';
     const JOIN_ALIAS_KEY = 'joinAlias';
     const JOIN_COLUMN_KEY = 'joinColumn';
     const JOIN_TABLE_KEY = 'joinTable';
@@ -120,9 +121,14 @@ class ModelQueryBuilder
         
         // build the default ON expression defined in the relationship if not overriden.
         if ($onExpr === null) {
-            $column = $relationship['column'];
+            $column = $relationship[self::COLUMN_KEY];
             $joinColumn = isset($relationship[self::JOIN_COLUMN_KEY]) ? $relationship[self::JOIN_COLUMN_KEY] : $column;
-            
+
+            if ($relationship[self::RELATIONSHIP_KEY] === Model::RELATIONSHIP_MANY_TO_MANY) {
+                $column = $column[0];
+                $joinColumn = $joinColumn[0];
+            }
+
             $onExpr = "`$parentAlias`.`$column` = `$alias`.`$joinColumn`";
         }
 
@@ -251,13 +257,13 @@ class ModelQueryBuilder
 
             // if the relationship is many-to-many, join the mapping table. 
             if ($join[self::RELATIONSHIP_KEY]['relationship'] === Model::RELATIONSHIP_MANY_TO_MANY) {
+                $column = $join[self::RELATIONSHIP_KEY][self::COLUMN_KEY];
+                $joinColumn = isset($join[self::RELATIONSHIP_KEY][self::JOIN_COLUMN_KEY]) ? $join[self::RELATIONSHIP_KEY][self::JOIN_COLUMN_KEY] : $column;
                 $joinTable = $join[self::RELATIONSHIP_KEY][self::JOIN_TABLE_KEY];
-                
+
                 // TODO: make this actually dynamic!
-                $sql .= " $method JOIN `$joinTable` ON `u`.`user_id` = `$joinTable`.`user_id`";
-                $onExpr = "`$joinTable`.`groupid` = `$alias`.`id`";
-                // $alias = $joinTable;
-                // $usesColumns = true;
+                $sql .= " $method JOIN `$joinTable` ON `u`.`{$column[0]}` = `$joinTable`.`{$joinColumn[0]}`";
+                $onExpr = "`$joinTable`.`{$joinColumn[1]}` = `$alias`.`$column[1]`";
             }
 
             if (!$usesColumns) {
@@ -395,7 +401,7 @@ class ModelQueryBuilder
                         
                         $reverseRelationship = Model::getReverseRelationship($relationship);
                         
-                        if ($reverseRelationship === null && !isset($relationship['column'])) {
+                        if ($reverseRelationship === null && !isset($relationship[self::COLUMN_KEY])) {
                             // TODO: create more meaningful exception message.
                             throw new \Exception('Model is not configured for reverse relationships.');
                         }
@@ -406,9 +412,14 @@ class ModelQueryBuilder
                             $reverseRelationshipAttribute = isset($relationship['inverse']) ? $relationship['inverse'] : $relationship['mappedBy'];
                         }
                         
-                        $column = $relationship['column'];
+                        $column = $relationship[self::COLUMN_KEY];
                         $joinColumn = isset($relationship[self::JOIN_COLUMN_KEY]) ? $relationship[self::JOIN_COLUMN_KEY] : $column;
-                        
+
+                        if ($relationship[self::RELATIONSHIP_KEY] === Model::RELATIONSHIP_MANY_TO_MANY) {
+                            $column = $column[isset($relationship['mappedBy']) ? 1 : 0];
+                            $joinColumn = $joinColumn[isset($relationship['mappedBy']) ? 0 : 1];
+                        }
+
                         foreach ($models as &$model) {
                             $columnValue = $model->{$joinColumn};
                             
@@ -460,12 +471,12 @@ class ModelQueryBuilder
             //}
             
             $add = true;
-            $column = $relationship['column'];
+            $column = $relationship[self::COLUMN_KEY];
             $joinModelClass = get_class($joinModel);
             $primaryKey = $joinModelClass::$primaryKey;
             
             foreach ($model->{$attribute} as $compareModel) {
-                $compareModelColumn = isset($relationship[self::JOIN_COLUMN_KEY]) ? $relationship[self::JOIN_COLUMN_KEY] : $relationship['column'];
+                $compareModelColumn = isset($relationship[self::JOIN_COLUMN_KEY]) ? $relationship[self::JOIN_COLUMN_KEY] : $relationship[self::COLUMN_KEY];
                 
                 if ($compareModel->{$compareModelColumn} === $joinModel->{$column}) {
                     $add = false;

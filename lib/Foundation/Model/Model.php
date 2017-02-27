@@ -710,6 +710,9 @@ abstract class Model
 
         if ($relationshipType === self::RELATIONSHIP_MANY_TO_MANY) {
             $reverseRelationship['joinTable'] = isset($mappedRelationship['joinTable']) ? $mappedRelationship['joinTable'] : $mappedRelationship['joinTable'];
+
+            $reverseRelationship['column'] = array_reverse($reverseRelationship['joinColumn']);
+            $reverseRelationship['joinColumn'] = array_reverse($reverseRelationship['column']);
         }
 
         return $reverseRelationship;
@@ -763,6 +766,9 @@ abstract class Model
 
             if ($relationship['relationship'] === self::RELATIONSHIP_MANY_TO_MANY) {
                 $relationship['joinTable'] = $reverseRelationship['joinTable'];
+
+                $relationship['column'] = $reverseRelationship['column'];
+                $relationship['joinColumn'] = $reverseRelationship['joinColumn'];
             }
         }
         
