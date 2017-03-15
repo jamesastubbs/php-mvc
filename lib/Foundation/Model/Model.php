@@ -10,6 +10,7 @@ namespace PHPMVC\Foundation\Model;
 
 use PHPMVC\Foundation\Application;
 use PHPMVC\Foundation\Model\ClassResolver;
+use PHPMVC\Foundation\Model\ModelQueryBuilder;
 use PHPMVC\Foundation\Model\Relationship\ToManyRelationship;
 use PHPMVC\Foundation\Model\Relationship\ToOneRelationship;
 
@@ -235,12 +236,24 @@ abstract class Model
         }
     }
     
-    public static function findAll()
+    public static function findAll($withRelationships = true)
     {
         $selfClass = get_called_class();
-        $models = $selfClass::select();
-        
-        return $models;
+        $queryBuilder =  ModelQueryBuilder::select($selfClass, 'm');
+
+        if ($withRelationships) {
+            $relationships = array_keys(self::$relationships);
+            $relationshipsCount = count($relationships);
+
+            for ($i = 0; $i < $relationshipsCount; $i++) {
+                $relationshipName = $relationships[$i];
+                $relationship = $selfClass::getRelationship($relationshipName);
+
+                $queryBuilder->leftJoin("m.{$relationships[$i]}", "m{$i}");
+            }
+        }
+
+        return $queryBuilder->getResult();
     }
     
     public static function findByID($id)
