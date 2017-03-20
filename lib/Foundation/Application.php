@@ -239,10 +239,9 @@ class Application
     
 	private function matchRoute()
 	{
-        $url = isset($_GET['url']) ? $_GET['url'] : '/';
-        $url = rtrim($url, '/');
-        //$url = filter_var($url, FILTER_SANITIZE_URL);
-        
+        $url = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
+        $url = ltrim(rtrim($url, '/'), '/');
+
         $result = $this->router->matchRoute($url, $controller, $action, $parameters);
         
         $this->controller = $controller;
