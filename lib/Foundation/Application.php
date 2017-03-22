@@ -241,7 +241,12 @@ class Application
 	{
         $url = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
         $url = ltrim(rtrim($url, '/'), '/');
-        $url = substr($url, 0, strpos($url, '?'));
+        $urlGETStart = strpos($url, '?');
+
+        // strip out GET parameters if they exist within the request URI.
+        if ($urlGETStart !== false) {
+            $url = substr($url, 0, $urlGETStart);
+        }
 
         $result = $this->router->matchRoute($url, $controller, $action, $parameters);
         
