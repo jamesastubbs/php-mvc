@@ -319,7 +319,7 @@ class ModelQueryBuilder
         $fetchedData = null;
         
         try {
-            $fetchedData = $db->query($sql, $whereArguments);
+            $fetchedData = $db->queryWithArray($sql, $whereArguments);
         } catch (QueryException $e) {
             throw $e;
         }
@@ -487,6 +487,7 @@ class ModelQueryBuilder
             // only add the $joinModel if it hasn't already been added.
             if ($add) {
                 $model->{$attribute}->add($joinModel);
+                $model->{$attribute}->save();
             }
         } else if (!$toMany) {
             if (isset($model->{$attribute}) && $model->{$attribute} !== $joinModel) {
@@ -495,6 +496,7 @@ class ModelQueryBuilder
             }
             
             $model->{$attribute}->set($joinModel);
+            $model->{$attribute}->save();
         }
     }
     

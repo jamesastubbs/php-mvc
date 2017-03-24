@@ -327,7 +327,7 @@ abstract class Model
 		
 		$statement .= $statementPart . ');';
 		
-		$lastInsertId = self::$db->query($statement, !empty($arguments) ? $arguments : null);
+		$lastInsertId = self::$db->queryWithArray($statement, !empty($arguments) ? $arguments : null);
 		$this->{$primaryKey} = $lastInsertId;
         
 		if ($fetchAfter && !empty($columns)) {
@@ -345,7 +345,7 @@ abstract class Model
 			}
             
 			$statement .= " FROM $tableName WHERE $primaryKey = ? LIMIT 1";
-			$result = $db->query($statement, $this->{$primaryKey});
+			$result = $db->queryWithArray($statement, $this->{$primaryKey});
 			
 			if (empty($result)) {
 				return false;
@@ -493,7 +493,7 @@ abstract class Model
 		$selfName = get_class($this);
         $selfPrimaryKey = $selfName::$primaryKey;
         $selfTableName = $selfName::$tableName;
-		return (bool)self::$db->query("DELETE FROM $selfTableName WHERE $selfPrimaryKey = ?", $this->{$selfPrimaryKey});
+		return self::$db->query("DELETE FROM $selfTableName WHERE $selfPrimaryKey = ?", $this->{$selfPrimaryKey});
 	}
 	
     // TODO: decide if this is being used. If not, deprecate or delete.
