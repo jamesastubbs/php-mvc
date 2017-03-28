@@ -66,12 +66,8 @@ class DB
         return $this->driver->query($statement, $values);
     }
 
-    public function queryWithArray($statement, array $values = null)
+    public function queryWithArray($statement, array $values)
     {
-        if ($values === null) {
-            $values = [];
-        }
-
         return call_user_func_array([$this, 'query'], array_merge([$statement], $values));
     }
 

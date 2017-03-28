@@ -442,52 +442,117 @@ abstract class Model
         
 		return $fetchedObjects;
 	}
-	
-	public function update()
-	{
-		$selfClass = get_called_class();
+
+    public function update()
+    {
+        $selfClass = get_called_class();
         $primaryKey = $selfClass::$primaryKey;
         $db = self::$db;
-		$dbName = $db->dbName;
+        $dbName = $db->dbName;
         $tableName = $selfClass::$tableName;
         $statement = "UPDATE $dbName.$tableName SET ";
-		$arguments = [];
+        $arguments = [];
         $columns = $selfClass::$columns;
-		
+
         $first = true;
-        
-		foreach ($this->_attributes as $key => $value) {
-			if (!array_key_exists($key, $columns) || $key === $primaryKey) {
-				continue;
-			}
-			
-			$oldValue = $this->_cachedAttributes[$key];
-			
-			if ($value != $oldValue) {
-				if ($first) {
-					$first = false;
+
+        foreach ($this->_attributes as $key => $value) {
+            if (!array_key_exists($key, $columns) || $key === $primaryKey) {
+                continue;
+            }
+
+            $oldValue = $this->_cachedAttributes[$key];
+
+            if ($value != $oldValue) {
+                if ($first) {
+                    $first = false;
                 } else {
-					$statement .= ', ';
+                    $statement .= ', ';
                 }
                 
                 $value = $selfClass::getColumnValue($key, $value);
                 $this->{$key} = $value;
-				$statement .= "$key = ?";
-				$arguments[] = $value;
-			}
-		}
-		
-		if (!empty($arguments)) {
-			$statement .= " WHERE $primaryKey = " . $this->{$primaryKey};
-            
-            $result = call_user_func_array([$db, 'query'], [$statement, $arguments]);
-            
-			return $result;
-		}
-		
-		return true;
+                $statement .= "$key = ?";
+                $arguments[] = $value;
+            }
+        }
+
+        if (!empty($arguments)) {
+            $statement .= " WHERE $primaryKey = " . $this->{$primaryKey};
+
+            if (!call_user_func_array([$db, 'query'], [$statement, $arguments])) {
+                return false;
+            }
+        }
+
+        $relationships = array_keys($selfClass::$relationships);
+
+        foreach ($relationships as $relationshipName) {
+            if (!$this->updateRelationship($relationshipName)) {
+                return false;
+            }
+        }
+
+        return true;
 	}
-	
+
+    protected function updateRelationship($relationshipName)
+    {
+        $db = self::$db;
+        $selfClass = get_called_class();
+        $relationship = $selfClass::getRelationship($relationshipName);
+        $relationshipType = $relationship['relationship'];
+        $relationshipStore = $this->{$relationshipName};
+
+        if ($relationshipType === self::RELATIONSHIP_MANY_TO_MANY || $relationshipType === self::RELATIONSHIP_ONE_TO_MANY) {
+            $pending = $relationshipStore->getPending();
+
+            if ($relationshipType === self::RELATIONSHIP_MANY_TO_MANY) {
+                $joinTable = $relationship['joinTable'];
+                $columns = $relationship['column'];
+                $joinColumns = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $columns;
+
+                $thisValue = $this->{$columns[0]};
+
+                $deletes = [];
+
+                foreach ($pending['toRemove'] as $modelToRemove) {
+                    $relatingValue = $modelToRemove->{$columns[1]};
+
+                    $deletes[] = "({$joinColumns[0]} = {$thisValue} AND {$joinColumns[1]} = {$relatingValue})";
+                }
+
+                if (!empty($deletes)) {
+                    $deleteStatement = "DELETE FROM {$joinTable} WHERE " . implode(' OR ', $deletes);
+
+                    if (!$db->query($deleteStatement)) {
+                        return false;
+                    }
+                }
+
+                $inserts = [];
+
+                foreach ($pending['toAdd'] as $modelToAdd) {
+                    $relatingValue = $modelToAdd->{$columns[1]};
+
+                    $inserts[] = "({$thisValue}, {$relatingValue})";
+                }
+
+                if (!empty($inserts)) {
+                    $insertStatement = "INSERT INTO {$joinTable} ({$joinColumns[0]}, {$joinColumns[1]}) VALUES " . implode(', ', $inserts);
+
+                    if (!$db->query($insertStatement)) {
+                        return false;
+                    }
+                }
+
+                $relationshipStore->save();
+            }
+        }
+
+        return true;
+    }
+
 	public function delete()
 	{
 		$selfName = get_class($this);
@@ -531,7 +596,6 @@ abstract class Model
         $outputRelationships = true;
         $selfClass = get_class($this);
         $primaryKeyValue = $this->{$selfClass::$primaryKey};
-        $selfClass = get_class($this);
         $columns = array_keys($selfClass::$columns);
         
         // set up an array for the current calling class if it doesn't exist in the output log.

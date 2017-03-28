@@ -8,7 +8,8 @@ use PHPMVC\Foundation\Model\Relationship\Relationship;
 class ToManyRelationship extends Relationship
 {
     protected $storage = [];
-    
+    protected $unsavedStorage = [];
+
     public function add(Model $model)
     {
         if (get_class($model) !== $this->modelClass) {
@@ -17,8 +18,8 @@ class ToManyRelationship extends Relationship
         
         $primaryKey = $this->primaryKey;
         
-        if (!in_array($model->{$primaryKey}, $this->storage)) {
-            $this->storage[] = $model->{$primaryKey};
+        if (!in_array($model->{$primaryKey}, $this->unsavedStorage)) {
+            $this->unsavedStorage[] = $model->{$primaryKey};
         }
         
         Model::cacheModel($model);
@@ -73,19 +74,20 @@ class ToManyRelationship extends Relationship
         if (get_class($model) !== $this->modelClass) {
             throw new \Exception('The passed model with the class \'' . get_class($model) . "' does not match the specified relationahip class of '{$this->modelClass}'.");
         }
-        
-        $storage = $this->storage;
-        $count = count($storage);
+
+        $primaryKey = $this->primaryKey;
         $result = false;
-        
+        $storage = $this->unsavedStorage;
+        $count = count($storage);
+
         for ($i = 0; $i < $count; $i++) {
-            if ($storage[$i] === $model) {
-                array_splice($this->storage, $i, 1);
+            if ($storage[$i] === $model->{$primaryKey}) {
+                array_splice($this->unsavedStorage, $i, 1);
                 $result = true;
                 break;
             }
         }
-        
+
         return $result;
     }
     
@@ -97,5 +99,51 @@ class ToManyRelationship extends Relationship
     public function isEmpty()
     {
         return empty($this->storage);
+    }
+
+    public function getPending()
+    {
+        $modelClass = $this->modelClass;
+        $primaryKey = $this->primaryKey;
+        $toAdd = [];
+        $toAddKeys = array_merge([], $this->unsavedStorage);
+        $toRemove = [];
+
+        $toAddKeysCount = count($toAddKeys);
+
+        foreach ($this->storage as $modelKey) {
+            $found = false;
+
+            for ($i = 0; $i < $toAddKeysCount; $i++) {
+                $addingKey = $toAddKeys[$i];
+
+                if ($addingKey === $modelKey) {
+                    $found = true;
+
+                    array_splice($toAddKeys, $i, 1);
+                    $toAddKeysCount--;
+
+                    break;
+                }
+            }
+
+            if (!$found) {
+                $toRemove[] = Model::getCachedModel($modelClass, $modelKey);
+            }
+        }
+
+        foreach ($toAddKeys as $key) {
+            $toAdd[] =  Model::getCachedModel($modelClass, $key);
+        }
+
+        return [
+            'toAdd' => $toAdd,
+            'toRemove' => $toRemove
+        ];
+    }
+
+    public function save()
+    {
+        $this->storage = array_merge([], $this->unsavedStorage);
     }
 }

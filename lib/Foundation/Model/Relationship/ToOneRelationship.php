@@ -11,20 +11,20 @@ class ToOneRelationship extends Relationship
     {
         $model = null;
         $modelID = $this->storage;
-        
+
         if ($modelID !== null) {
             $modelClass = $this->modelClass;
-            
+
             $model = Model::getCachedModel($modelClass, $modelID);
         }
-        
+
         return $model;
     }
     
     public function set(Model $model = null)
     {
         $primaryKey = $this->primaryKey;
-        
-        $this->storage = $model->{$primaryKey};
+
+        $this->unsavedStorage = $model->{$primaryKey};
     }
 }

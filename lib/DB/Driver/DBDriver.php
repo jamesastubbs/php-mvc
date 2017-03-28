@@ -78,20 +78,41 @@ abstract class DBDriver
         return $this->connection;
     }
 
-    protected function executeSQL($statement, array $values = null)
+    protected function executeSQL(&$statement, array &$values = null)
     {
         $params = [];
 
         if ($values !== null && !empty($values)) {
-            $i = 0;
+            $index = 0;
+            $keyIndex = 0;
 
-            $statement = preg_replace_callback('/(?<!\\\)(?:\\\\)*\?/', function ($matches) use ($values, &$i, &$params) {
-                $key = ":p_$i";
-                $value = $values[$i++];
+            $statement = preg_replace_callback('/(?<!\\\)(?:\\\\)*\?/', function ($matches) use ($values, &$index, &$keyIndex, &$params) {
+                $firstKey = true;
+                $keyStr = '';
+                $valueObjs = $values[$index];
 
-                $params[$key] = $value;
+                $index++;
 
-                return $key;
+                if (!is_array($valueObjs)) {
+                    $valueObjs = [$valueObjs];
+                }
+
+                foreach ($valueObjs as $value) {
+                    if ($firstKey) {
+                        $firstKey = false;
+                    } else {
+                        $keyStr .= ', ';
+                    }
+
+                    $key = ":p_$keyIndex";
+                    $params[$key] = $value;
+
+                    $keyStr .= $key;
+
+                    $keyIndex++;
+                }
+
+                return $keyStr;
             }, $statement);
         }
 
@@ -100,6 +121,8 @@ abstract class DBDriver
         foreach ($params as $key => $value) {
             $query->bindValue($key, $value);
         }
+
+        $values = $params;
 
         if (!$query->execute()) {
             return false;
@@ -113,6 +136,10 @@ abstract class DBDriver
                 break;
             case 'INSERT':
                 $result = $this->connection->lastInsertId();
+
+                if ($result === '0') {
+                    $result = true;
+                }
                 break;
             case 'UPDATE':
                 // no break.
@@ -131,10 +158,8 @@ abstract class DBDriver
         $sql = $statement;
 
         if ($values !== null && !empty($values)) {
-            $i = 0;
-
-            $sql = preg_replace_callback('/(?<!\\\)(?:\\\\)*\?/', function ($matches) use ($values, &$i) {
-                $value = $values[$i++];
+            $sql = preg_replace_callback('/\:p_[0-9]+/', function ($matches) use ($values) {
+                $value = $values[$matches[0]];
 
                 if (is_string($value)) {
                     $value = "'$value'";

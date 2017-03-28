@@ -312,14 +312,16 @@ class ModelQueryBuilder
         // get DB connection object, SQL statement and arguments.
         $db = self::getDB();
         $sql = $this->getSQL();
-        $whereArguments = !empty($this->whereArguments) ? $this->whereArguments : null;
-        
+
         // execute query.
         $result = null;
         $fetchedData = null;
         
         try {
-            $fetchedData = $db->queryWithArray($sql, $whereArguments);
+            $fetchedData = call_user_func_array(
+                [$db, 'query'],
+                array_merge([$sql], $this->whereArguments)
+            );
         } catch (QueryException $e) {
             throw $e;
         }
@@ -438,7 +440,7 @@ class ModelQueryBuilder
                 $result = array_merge($cache[$aliases[$this->selectAlias]], []);
             }
         }
-        
+
         return $result;
     }
     
