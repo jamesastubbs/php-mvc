@@ -37,7 +37,7 @@ class ToManyRelationship extends Relationship
         $modelClass = $this->modelClass;
         
         foreach ($modelIDs as $modelID) {
-            if (!in_array($modelID, $this->storage)) {
+            if (!in_array($modelID, $this->unsavedStorage)) {
                 throw new \Exception("Model with ID of '$modelID' not found.");
             }
             
@@ -55,18 +55,18 @@ class ToManyRelationship extends Relationship
     
     public function getFirst()
     {
-        if (!isset($this->storage[0])) {
+        if (!isset($this->unsavedStorage[0])) {
             throw new \Exception("No '{$this->modelClass}' models stored in relationship.");
         }
         
-        $models = $this->get([$this->storage[0]]);
+        $models = $this->get([$this->unsavedStorage[0]]);
         
         return empty($models) ? null : $models[0];
     }
     
     public function getAll()
     {
-        return $this->get($this->storage);
+        return $this->get($this->unsavedStorage);
     }
     
     public function remove(Model $model)
@@ -93,12 +93,12 @@ class ToManyRelationship extends Relationship
     
     public function count()
     {
-        return count($this->storage);
+        return count($this->unsavedStorage);
     }
     
     public function isEmpty()
     {
-        return empty($this->storage);
+        return empty($this->unsavedStorage);
     }
 
     public function getPending()

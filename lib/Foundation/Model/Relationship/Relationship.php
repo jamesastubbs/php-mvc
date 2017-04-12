@@ -15,6 +15,11 @@ abstract class Relationship
         $this->primaryKey = $modelClass::$primaryKey;
     }
 
+    public function hasChanges()
+    {
+        return $this->storage !== $this->unsavedStorage;
+    }
+
     public function save()
     {
         $this->storage = $this->unsavedStorage;

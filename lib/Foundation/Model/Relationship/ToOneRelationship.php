@@ -10,7 +10,7 @@ class ToOneRelationship extends Relationship
     public function get()
     {
         $model = null;
-        $modelID = $this->storage;
+        $modelID = $this->unsavedStorage;
 
         if ($modelID !== null) {
             $modelClass = $this->modelClass;

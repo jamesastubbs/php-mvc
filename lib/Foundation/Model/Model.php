@@ -498,59 +498,190 @@ abstract class Model
 
     protected function updateRelationship($relationshipName)
     {
-        $db = self::$db;
         $selfClass = get_called_class();
         $relationship = $selfClass::getRelationship($relationshipName);
         $relationshipType = $relationship['relationship'];
-        $relationshipStore = $this->{$relationshipName};
 
         if ($relationshipType === self::RELATIONSHIP_MANY_TO_MANY || $relationshipType === self::RELATIONSHIP_ONE_TO_MANY) {
-            $pending = $relationshipStore->getPending();
-
             if ($relationshipType === self::RELATIONSHIP_MANY_TO_MANY) {
-                $joinTable = $relationship['joinTable'];
-                $columns = $relationship['column'];
-                $joinColumns = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $columns;
-
-                $thisValue = $this->{$columns[0]};
-
-                $deletes = [];
-
-                foreach ($pending['toRemove'] as $modelToRemove) {
-                    $relatingValue = $modelToRemove->{$columns[1]};
-
-                    $deletes[] = "({$joinColumns[0]} = {$thisValue} AND {$joinColumns[1]} = {$relatingValue})";
-                }
-
-                if (!empty($deletes)) {
-                    $deleteStatement = "DELETE FROM {$joinTable} WHERE " . implode(' OR ', $deletes);
-
-                    if (!$db->query($deleteStatement)) {
-                        return false;
-                    }
-                }
-
-                $inserts = [];
-
-                foreach ($pending['toAdd'] as $modelToAdd) {
-                    $relatingValue = $modelToAdd->{$columns[1]};
-
-                    $inserts[] = "({$thisValue}, {$relatingValue})";
-                }
-
-                if (!empty($inserts)) {
-                    $insertStatement = "INSERT INTO {$joinTable} ({$joinColumns[0]}, {$joinColumns[1]}) VALUES " . implode(', ', $inserts);
-
-                    if (!$db->query($insertStatement)) {
-                        return false;
-                    }
-                }
-
-                $relationshipStore->save();
+                return $this->updateManyToManyRelationship($relationshipName, $relationship);
+            } else {
+                return $this->updateOneToManyRelationship($relationshipName, $relationship);
             }
+        } elseif ($relationshipType === self::RELATIONSHIP_MANY_TO_ONE || $relationshipType === self::RELATIONSHIP_ONE_TO_ONE) {
+            return $this->updateToOneRelationship($relationshipName, $relationship);
         }
 
         return true;
+    }
+
+    /**
+     * Updates '$relationship' in the style of "many-to-many".
+     * Each stored model is compared with the mapping table records,
+     * then executes inserts and deletes where needed.
+     *
+     * @param   string  $relationshipName  Name of the relationship to update.
+     * @param   array   $relationship      Details of the relationship.
+     *
+     * @return  boolean                    'true' if update was successful or has no changes to process.
+     * @throws  exception                  If relationship is not "many-to-many".
+     */
+    protected function updateManyToManyRelationship($relationshipName, $relationship)
+    {
+        if ($relationship['relationship'] !== self::RELATIONSHIP_MANY_TO_MANY) {
+            throw $this->createUpdateRelationshipException(
+                $relationshipName,
+                $relationship,
+                self::RELATIONSHIP_MANY_TO_MANY
+            );
+        }
+
+        $db = self::$db;
+        $relationshipStore = $this->{$relationshipName};
+        $selfClass = get_called_class();
+
+        $pending = $relationshipStore->getPending();
+
+        $joinTable = $relationship['joinTable'];
+        $columns = $relationship['column'];
+        $joinColumns = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $columns;
+
+        $thisValue = $this->{$columns[0]};
+
+        $deletes = [];
+
+        foreach ($pending['toRemove'] as $modelToRemove) {
+            $relatingValue = $modelToRemove->{$columns[1]};
+
+            $deletes[] = "({$joinColumns[0]} = {$thisValue} AND {$joinColumns[1]} = {$relatingValue})";
+        }
+
+        if (!empty($deletes)) {
+            $deleteStatement = "DELETE FROM {$joinTable} WHERE " . implode(' OR ', $deletes);
+
+            if (!$db->query($deleteStatement)) {
+                return false;
+            }
+        }
+
+        $inserts = [];
+
+        foreach ($pending['toAdd'] as $modelToAdd) {
+            $relatingValue = $modelToAdd->{$columns[1]};
+
+            $inserts[] = "({$thisValue}, {$relatingValue})";
+        }
+
+        if (!empty($inserts)) {
+            $insertStatement = "INSERT INTO {$joinTable} ({$joinColumns[0]}, {$joinColumns[1]}) VALUES " . implode(', ', $inserts);
+
+            if (!$db->query($insertStatement)) {
+                return false;
+            }
+        }
+
+        $relationshipStore->save();
+
+        return true;
+    }
+
+    /**
+     * Updates '$relationship' in the style of "one-to-many".
+     *
+     * @param   string  $relationshipName  Name of the relationship to update.
+     * @param   array   $relationship      Details of the relationship.
+     *
+     * @return  boolean                    'true' if update was successful or has no changes to process.
+     * @throws  exception                  If relationship is not "many-to-one" or "one-to-many".
+     */
+    protected function updateOneToManyRelationship($relationshipName, $relationship)
+    {
+        if ($relationship['relationship'] !== self::RELATIONSHIP_ONE_TO_MANY) {
+            throw $this->createUpdateRelationshipException(
+                $relationshipName,
+                $relationship,
+                self::RELATIONSHIP_ONE_TO_MANY
+            );
+        }
+
+        $selfClass = get_called_class();
+        $relationshipStore = $this->{$relationshipName};
+
+        if (!$relationshipStore->hasChanges()) {
+            return true;
+        }
+
+        // TODO: implement support.
+        throw new \Exception('Function is unimplemented.');
+    }
+
+    /**
+     * Updates '$relationship' in the style of "many-to-one" or "one-to-one".
+     *
+     * @param   string  $relationshipName  Name of the relationship to update.
+     * @param   array   $relationship      Details of the relationship.
+     *
+     * @return  boolean                    'true' if update was successful or has no changes to process.
+     * @throws  exception                  If relationship is not "many-to-one" or "one-to-one".
+     */
+    protected function updateToOneRelationship($relationshipName, $relationship)
+    {
+        $typeBitmask = self::RELATIONSHIP_MANY_TO_ONE | self::RELATIONSHIP_ONE_TO_ONE;
+
+        if (!($typeBitmask & $relationship['relationship'])) {
+            throw $this->createUpdateRelationshipException(
+                $relationshipName,
+                $relationship,
+                $typeBitmask
+            );
+        }
+
+        $selfClass = get_called_class();
+        $relationshipStore = $this->{$relationshipName};
+
+        if (!$relationshipStore->hasChanges()) {
+            return true;
+        }
+
+        $column = $relationship['column'];
+        $joinColumn = $relationship['joinColumn'];
+        $joinColumnValue = $relationshipStore->get()->{$joinColumn};
+
+        $primaryKey = $selfClass::$primaryKey;
+        $primaryValue = $this->{$primaryKey};
+        $tableName = $selfClass::$tableName;
+
+        $statement = "UPDATE {$tableName} SET {$column} = {$joinColumnValue} WHERE {$primaryKey} = {$primaryValue};";
+        $db = self::$db;
+
+        return $db->query($statement) !== false;
+    }
+
+    protected function createUpdateRelationshipException($relationshipName, $relationship, $expectedType)
+    {
+        $selectedTypes = [];
+        $types = [
+            self::RELATIONSHIP_UNKNOWN => 'unknown',
+            self::RELATIONSHIP_ONE_TO_ONE => 'one-to-one',
+            self::RELATIONSHIP_ONE_TO_MANY => 'one-to-many',
+            self::RELATIONSHIP_MANY_TO_ONE => 'many-to-one',
+            self::RELATIONSHIP_MANY_TO_MANY => 'many-to-many'
+        ];
+
+        foreach ($types as $type => $name) {
+            if ($expectedType & $type) {
+                $selectedTypes[] = "'$name'";
+            }
+        }
+
+        $lastType = array_pop($selectedTypes);
+        $typeName = implode(', ', $selectedTypes);
+        $typeName .= $typeName === '' ? '' : ' or ';
+        $typeName .= $lastType;
+
+        return new Exception(
+            "Attempted to update relationship with the name of '$relationshipName' ($typeName) which was expected to be $typeName"
+        );
     }
 
 	public function delete()
