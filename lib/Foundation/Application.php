@@ -16,6 +16,14 @@ use PHPMVC\Foundation\Router;
 
 class Application
 {
+    const METHOD_DELETE = 'DELETE';
+    const METHOD_GET = 'GET';
+    const METHOD_HEAD = 'HEAD';
+    const METHOD_OPTIONS = 'OPTIONS';
+    const METHOD_POST = 'POST';
+    const METHOD_PUT = 'PUT';
+    const METHOD_UNKNOWN = '_UNKNOWN';
+
     private $action = null;
 	private $controller = null;
     private $db = null;
@@ -212,7 +220,31 @@ class Application
                 
         return null;
     }
-    
+
+    /**
+     * @return  string  Method name of the received HTTP request.
+     */
+    public static function getHTTPMethod()
+    {
+        $method = strtoupper($_SERVER['REQUEST_METHOD']);
+        $methods = [
+            self::METHOD_DELETE,
+            self::METHOD_GET,
+            self::METHOD_HEAD,
+            self::METHOD_OPTIONS,
+            self::METHOD_POST,
+            self::METHOD_PUT
+        ];
+
+        if (!in_array($method, $methods)) {
+            $method = self::METHOD_UNKNOWN;
+        }
+
+        unset($methods);
+
+        return $method;
+    }
+
     public static function isWhitelisted()
     {
         $whitelisted = false;

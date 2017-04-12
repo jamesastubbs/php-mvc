@@ -2,6 +2,8 @@
 
 namespace PHPMVC\Foundation;
 
+use PHPMVC\Foundation\Application;
+
 class Router
 {
     private $name = null;
@@ -15,24 +17,74 @@ class Router
         $this->name = $name;
         $this->namespaces = $namespaces;
         $this->rootPath = $rootPath;
-        
-        $routesPath = "$rootPath/config/routes.json";
-        
-        $this->processRoutesFromPath($routesPath);
+
+        $this->processRoutesFromPath("$rootPath/config/routes.json");
     }
-    
+
+    /**
+     * Fetches the JSON content from the file located under '$path'.
+     * The JSON data is then processed to populate the routes within this class instance to be used later on.
+     *
+     * @param  string  $path  Location of the JSON routes file.
+     */
     private function processRoutesFromPath($path)
     {
-        if (!file_exists($path)) {
-            throw new \Exception("Config file '$path' not found.");
-        }
-        
-        $jsonString = file_get_contents($path);
-        $routes = json_decode($jsonString, true);
-        
+        $routes = $this->getRoutesFromHTTPMethod(
+            Application::getHTTPMethod(),
+            $path
+        );
+
         $this->processRoutes($routes);
     }
-    
+
+    /**
+     * Processes the routes in '$routesPath' that fall under the HTTP method of '$method'.
+     *
+     * @param   string  $method      Received HTTP request method.
+     * @param   string  $routesPath  Location of the routes file.
+     *
+     * @return  array                Collection of routes found in the routes file.
+     * @throws  Exception            If there is an issue processing the routes file.
+     */
+    private function getRoutesFromHTTPMethod($method, $routesPath)
+    {
+        if (!file_exists($routesPath)) {
+            throw new \Exception("Config file '$routesPath' not found.");
+        }
+
+        $jsonString = file_get_contents($routesPath);
+        $routesArray = json_decode($jsonString, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \Exception("Error parsing JSON file '$routesPath' - " . json_last_error_msg());
+        }
+
+        $routesMethods = array_keys($routesArray);
+        $filteredRoutesMethods = preg_grep("/$method|\*/", $routesMethods);
+        $routes = [];
+
+        foreach ($filteredRoutesMethods as $method) {
+            $routes = array_merge($routes, $routesArray[$method]);
+        }
+
+        if (in_array('@import', $routesMethods)) {
+            foreach ($routesArray['@import'] as $routePath) {
+                $namespace = explode(':', $routePath)[0];
+
+                if (!isset($this->namespaces[$namespace])) {
+                    throw new \Exception("Namespace '$namespace' not found.");
+                }
+
+                $path = current($this->namespaces[$namespace]) . '/../config/routes.json';
+
+                $importedRoutes = $this->getRoutesFromHTTPMethod($method, $path);
+                $routes = array_merge($routes, $importedRoutes);
+            }
+        }
+
+        return $routes;
+    }
+
     private function processRoutes(array $routes)
     {
         foreach ($routes as $routePath => $route) {
@@ -41,19 +93,9 @@ class Router
                     case 'default':
                         $this->baseRoutes[] = explode(':', $routePath)[0];
                         break;
-                    case 'import':
-                        $namespace = explode(':', $routePath)[0];
-                        
-                        if (!isset($this->namespaces[$namespace])) {
-                            throw new \Exception("Namespace '$namespace' not found.");
-                        }
-                        
-                        $path = current($this->namespaces[$namespace]) . '/../config/routes.json';
-                        $this->processRoutesFromPath($path);
                     default:
                         break;
                 }
-                
                 continue;
             }
             
@@ -257,7 +299,7 @@ class Router
                     }
                 }
             } else {
-                $controller = \PHPMVC\Foundation\Application::getConfigValue('NAME') . '\\Controller\\HomeController';
+                $controller = Application::getConfigValue('NAME') . '\\Controller\\HomeController';
                 $action = 'index';
             }
         }
