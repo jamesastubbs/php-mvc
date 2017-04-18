@@ -21,7 +21,8 @@ class ModelQueryBuilder
     const ORDER_BY_DESC = 'DESC';
     const RELATIONSHIP_KEY = 'relationship';
     const RELATIONSHIP_ATTRIBUTE_KEY = 'relationshipAttribute';
-    
+    const SUB_QUERY_KEY = 'subQuery';
+
     private $aliases = [];
     private $joins = [];
     private $limit = -1;
@@ -31,7 +32,7 @@ class ModelQueryBuilder
     private $selectColumns = null;
     private $selectModel = null;
     private $whereExpr = null;
-    protected $whereArguments = [];
+    protected $queryArguments = [];
     protected static $db = null;
     
     public function __construct($data, $isModel)
@@ -86,29 +87,30 @@ class ModelQueryBuilder
         return $this;
     }
     
-    public function innerJoin($attribute, $alias, $onExpr = null)
+    public function innerJoin($attribute, $alias, $onExpr = null, array $params = [])
     {
         return $this->join('INNER', $attribute, $alias, $onExpr);
     }
     
-    public function leftJoin($attribute, $alias, $onExpr = null)
+    public function leftJoin($attribute, $alias, $onExpr = null, array $params = [])
     {
         return $this->join('LEFT', $attribute, $alias, $onExpr);
     }
     
-    public function rightJoin($attribute, $alias, $onExpr = null)
+    public function rightJoin($attribute, $alias, $onExpr = null, array $params = [])
     {
         return $this->join('RIGHT', $attribute, $alias, $onExpr);
     }
     
-    protected function join($joinMethod, $attribute, $alias, $onExpr = null)
+    protected function join($joinMethod, $attribute, $alias, $onExpr = null, array $params = [])
     {
-        if (strpos($attribute, '.') === false) {
-            throw new \Exception("Unsupported attribute: '$attribute'.");
+        if (preg_match('/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/', $attribute) === 0) {
+            return $this->joinSubQuery($joinMethod, $attribute, $alias, $onExpr);
         }
-        
+
         $attributeParts = explode('.', $attribute);
         $parentAlias = $attributeParts[0];
+
         $relationshipAttribute = $attributeParts[1];
         $parentModelClass = $this->getAlias($parentAlias);
         
@@ -150,10 +152,41 @@ class ModelQueryBuilder
         // store the join definition.
         $this->joins[] = $join;
 
+        // add the parameters.
+        if (!empty($params)) {
+            $this->queryArguments = array_merge($this->queryArguments, $params);
+        }
+
         // return '$this' for method chaining.
         return $this;
     }
-    
+
+    protected function joinSubQuery($joinMethod, $subQuery, $alias, $onExpr = null, $params = [])
+    {
+        $subQuery = "($subQuery)";
+
+        // create the join definition.
+        $join = [
+            self::ALIAS_KEY => $alias,
+            self::METHOD_KEY => $joinMethod,
+            self::ON_EXPR_KEY => $onExpr,
+            self::SUB_QUERY_KEY => $subQuery
+        ];
+
+        // store the join definition.
+        $this->joins[] = $join;
+
+        // set the alias to preserve it.
+        $this->setAlias($alias, self::SUB_QUERY_KEY);
+
+        // add the parameters.
+        if (!empty($params)) {
+            $this->queryArguments = array_merge($this->queryArguments, $params);
+        }
+
+        return $this;
+    }
+
     public function where($expr)
     {
         if ($this->limit !== -1) {
@@ -164,7 +197,7 @@ class ModelQueryBuilder
             throw new \Exception('Cannot set the where clause after the offset has been set.');
         }
         
-        $this->whereArguments = array_slice(func_get_args(), 1);
+        $this->queryArguments = array_merge($this->queryArguments, array_slice(func_get_args(), 1));
         $this->whereExpr = $expr;
         
         return $this;
@@ -251,9 +284,18 @@ class ModelQueryBuilder
             // get the values from the join declaration.
             $alias = $join[self::ALIAS_KEY];
             $method = $join[self::METHOD_KEY];
+            $onExpr = $join[self::ON_EXPR_KEY];
+
+            if (!isset($join[self::RELATIONSHIP_KEY]) && isset($join[self::SUB_QUERY_KEY])) {
+                $subQuery = $join[self::SUB_QUERY_KEY];
+                $sql .= " $method JOIN $subQuery AS `$alias` ON $onExpr";
+
+                continue;
+            }
+
+            // get the model definition along with the table name.
             $model = $this->getAlias($alias);
             $modelTable = $model::$tableName;
-            $onExpr = $join[self::ON_EXPR_KEY];
 
             // if the relationship is many-to-many, join the mapping table. 
             if ($join[self::RELATIONSHIP_KEY]['relationship'] === Model::RELATIONSHIP_MANY_TO_MANY) {
@@ -320,7 +362,7 @@ class ModelQueryBuilder
         try {
             $fetchedData = call_user_func_array(
                 [$db, 'query'],
-                array_merge([$sql], $this->whereArguments)
+                array_merge([$sql], $this->queryArguments)
             );
         } catch (QueryException $e) {
             throw $e;
@@ -335,6 +377,7 @@ class ModelQueryBuilder
             // fetch the aliases and the joins which have been populated earlier.
             $aliases = $this->aliases;
             $joins = $this->joins;
+            $joinsCount = count($joins);
             $selectAlias = $this->getAlias($this->selectAlias);
             
             // iterate through all fetched records.
@@ -342,6 +385,10 @@ class ModelQueryBuilder
                 // iterate through all of the selected models.
                 // add the model to the cache if it doesn't already exist.
                 foreach ($aliases as $alias => $modelClass) {
+                    if ($modelClass === self::SUB_QUERY_KEY) {
+                        continue;
+                    }
+
                     $columns = $modelClass::$columns;
                     $primaryKey = $modelClass::$primaryKey;
                     $fetchedRowKey = "{$alias}_{$primaryKey}";
@@ -386,10 +433,21 @@ class ModelQueryBuilder
             
             if (!empty($cache)) {
                 // iterate through all of the joins.
-                foreach ($joins as &$join) {
+                for ($i = 0; $i < $joinsCount; $i++) {
+                    // if the current join doesn't support object mapping, skip it.
+                    if (!isset($joins[$i][self::JOIN_ALIAS_KEY])) {
+                        // remove the join from the '$joins' array to prevent iterating throuh it again.
+                        array_splice($joins, $i, 1);
+                        $joinsCount--;
+                        $i--;
+
+                        // continue on with iteration.
+                        continue;
+                    }
+
+                    $join = &$joins[$i];
                     $alias = $join[self::ALIAS_KEY];
                     $joinAlias = $join[self::JOIN_ALIAS_KEY];
-                    
                     $modelClass = $aliases[$alias];
                     $joinModelClass = $aliases[$joinAlias];
                     
@@ -429,11 +487,21 @@ class ModelQueryBuilder
                                 $joinColumnValue = $joinModel->{$column};
                                 
                                 if ($columnValue === $joinColumnValue) {
-                                    $this->addModelFromRelationship($model, $joinModel, $relationship, $relationshipAttribute, $reverseRelationship, $reverseRelationshipAttribute);
+                                    $this->addModelFromRelationship(
+                                        $model,
+                                        $joinModel,
+                                        $relationship,
+                                        $relationshipAttribute,
+                                        $reverseRelationship,
+                                        $reverseRelationshipAttribute
+                                    );
                                 }
                             }
                         }
                     }
+
+                    // remove pointer.
+                    unset($join);
                 }
                 
                 // return the collection of models (if any).
@@ -519,7 +587,7 @@ class ModelQueryBuilder
     
     private function getAlias($alias)
     {
-        if (!$this->aliases[$alias]) {
+        if (!isset($this->aliases[$alias])) {
             throw new \Exception("Alias '$alias' could not be found.");
         }
         
