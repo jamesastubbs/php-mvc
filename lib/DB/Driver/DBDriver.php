@@ -14,7 +14,7 @@ abstract class DBDriver
     /**
      * @var  boolean
      */
-    protected $inDebug = false;
+    protected $transactionStarted = false;
 
     /**
      * @abstract
@@ -76,6 +76,44 @@ abstract class DBDriver
     public function getConnection()
     {
         return $this->connection;
+    }
+
+    /**
+     * Calls '$transactionsFunc' to process SQL queries in a middle of an SQL transaction.
+     * If the transaction hasn't already been initiated, it is started at this point.
+     *
+     * @param   callable  $transactionsFunc  Function to process SQL queries.
+     *
+     * @return  DBDriver                    Current DBDriver object for used method chaining.
+     */
+    public function queue($transactionsFunc)
+    {
+        if (!$this->transactionStarted) {
+            $this->connection->beginTransaction();
+
+            $this->transactionStarted = true;
+        }
+
+        $transactionsFunc();
+
+        return $this;
+    }
+
+    /**
+     * Processes the SQL transaction.
+     * If the transaction hasn't already been initiated, nothing happens.
+     *
+     * @return  DBDriver  Current DBDriver object used for method chaining.
+     */
+    public function process()
+    {
+        if ($this->transactionStarted) {
+            $this->connection->commit();
+
+            $this->transactionStarted = false;
+        }
+
+        return $this;
     }
 
     protected function executeSQL(&$statement, array &$values = null)
@@ -181,7 +219,7 @@ abstract class DBDriver
             mkdir($logDir);
         }
 
-        if (file_exists($logPath)) {
+        if (!file_exists($logPath)) {
             touch($logPath);
         }
 

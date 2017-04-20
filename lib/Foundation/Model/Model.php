@@ -61,34 +61,20 @@ abstract class Model
             
             if ($relationshipType === Model::RELATIONSHIP_ONE_TO_MANY || $relationshipType === Model::RELATIONSHIP_MANY_TO_MANY) {
                 $this->_relationships[$relationshipName] = new ToManyRelationship($modelClass);
-            } else {
+            } elseif ($relationshipType === Model::RELATIONSHIP_MANY_TO_ONE || $relationshipType === Model::RELATIONSHIP_ONE_TO_ONE) {
                 $this->_relationships[$relationshipName] = new ToOneRelationship($modelClass);
             }
         }
         
         $this->{$primaryKey} = self::getTmpID();
     }
-    
+
     final public static function setDB($db)
     {
         self::$db = $db;
         $selfClass = get_called_class();
     }
-    
-    /*
-    final public static function getStored($id)
-    {
-        $model = null;
-        $selfClass = get_called_class();
-        
-        if (isset(self::$_storage[$selfClass]) && isset(self::$_storage[$selfClass]["$id"])) {
-            $model = self::$_storage[$selfClass]["$id"];
-        }
-        
-        return $model;
-    }
-    */
-    
+
     final protected static function getDB()
     {
         return self::$db;
@@ -273,99 +259,104 @@ abstract class Model
         
         return $model;
     }
-    
-	public function create($fetchAfter = false)
-	{
+
+    /**
+     * Inserts this current model into the database.
+     * It uses the column as well as the relationship definitions to populate the data with.
+     *
+     * @param   boolean  $fetchAfter  'true' to fetch the inserted model from the database.
+     *
+     * @return  boolean               'true' if the creation has succeeded.
+     */
+    public function create($fetchAfter = false)
+    {
+        $attributes = $this->_attributes;
         $db = self::$db;
-		$selfClass = get_class($this);
+        $selfClass = get_class($this);
         $primaryKey = $selfClass::$primaryKey;
         $selfRelationships = $selfClass::$relationships;
         $tableName = $selfClass::$tableName;
-		$statement = "INSERT INTO {$db->dbName}.{$tableName}(";
-		$statementPart = ') VALUES (';
-		$first = true;
-		$arguments = [];
-		
+        $statement = "INSERT INTO {$db->dbName}.{$tableName}(";
+        $statementPart = ') VALUES (';
+        $first = true;
+        $arguments = [];
+
         foreach ($this->_relationships as $relationshipName => $relationship) {
             if (!isset($selfRelationships[$relationshipName])) {
                 throw new \Exception("A relationship with the name of '$relationshipName' was not defined in the mode of '$selfClass'.");
             }
-            
+
             $relationshipDefinition = $selfClass::getRelationship($relationshipName);
+            $column = $relationshipDefinition['column'];
+            $joinColumn = $relationshipDefinition['joinColumn'];
             $type = $relationshipDefinition['relationship'];
-            
+
             if ($type === self::RELATIONSHIP_MANY_TO_ONE || $type === self::RELATIONSHIP_ONE_TO_ONE) {
                 $relatedModel = $relationship->get();
-                
-                // TODO: implement support for optional relationships.
-                if ($relatedModel !== null) {
-                    $joinKey = $relationshipDefinition['column'];
-                    $foreignKey = isset($relationshipDefinition['joinColumn']) ? $relationshipDefinition['joinColumn'] : $relationshipDefinition['column'];
-                    
-                    $this->_attributes[$foreignKey] = $relatedModel->{$joinKey};
-                }
+
+                $attributes[$column] = $relatedModel === null ? null : $relatedModel->{$joinColumn};
             }
         }
-        
-		foreach ($this->_attributes as $key => $value) {
+
+        foreach ($attributes as $key => $value) {
             if ($key === $primaryKey || $value === null) {
                 continue;
             }
-            
-			if ($first) {
-				$first = false;
-			} else {
-				$statement .= ', ';
-				$statementPart .= ', ';
-			}
-			
+
+            if ($first) {
+                $first = false;
+            } else {
+                $statement .= ', ';
+                $statementPart .= ', ';
+            }
+
             $statement .= $key;
-			$statementPart .= '?';
-            
-			$arguments[] = $selfClass::getColumnValue($key, $value);
-		}
-		
-		$statement .= $statementPart . ');';
-		
-		$lastInsertId = self::$db->queryWithArray($statement, !empty($arguments) ? $arguments : null);
-		$this->{$primaryKey} = $lastInsertId;
-        
-		if ($fetchAfter && !empty($columns)) {
-			$statement = 'SELECT ';
-			$isFirst = true;
-            
-			foreach ($columns as $column) {
-				if ($isFirst) {
-					$isFirst = false;
-				} else {
-					$statement .= ', ';
+            $statementPart .= '?';
+
+            $arguments[] = $selfClass::getColumnValue($key, $value);
+        }
+
+        $statement .= $statementPart . ');';
+
+        $lastInsertId = self::$db->queryWithArray($statement, !empty($arguments) ? $arguments : null);
+        $this->{$primaryKey} = $lastInsertId;
+
+        if ($fetchAfter && !empty($columns)) {
+            $statement = 'SELECT ';
+            $isFirst = true;
+
+            foreach ($columns as $column) {
+                if ($isFirst) {
+                    $isFirst = false;
+                } else {
+                    $statement .= ', ';
                 }
-                
-				$statement .= $column;
-			}
-            
-			$statement .= " FROM $tableName WHERE $primaryKey = ? LIMIT 1";
-			$result = $db->queryWithArray($statement, $this->{$primaryKey});
-			
-			if (empty($result)) {
-				return false;
-			}
-			
-			$result = $result[0];
-			
-			foreach ($columns as $column) {
-				if (array_key_exists($column, $result)) {
-					$this->_attributes[$column] = $result[$column];
+
+                $statement .= $column;
+            }
+
+            $statement .= " FROM $tableName WHERE $primaryKey = ? LIMIT 1";
+            $result = $db->queryWithArray($statement, $this->{$primaryKey});
+
+            if (empty($result)) {
+                return false;
+            }
+
+            $result = $result[0];
+
+            foreach ($columns as $column) {
+                if (array_key_exists($column, $result)) {
+                    $this->_attributes[$column] = $result[$column];
                     $this->_cachedAttributes[$column] = $result[$column];
-				}
-			}
-		}
-		
+                }
+            }
+        }
+
         Model::cacheModel($this);
-        
-		return (bool)$this->{$primaryKey};
-	}
-	
+
+        return (bool)$this->{$primaryKey};
+    }
+
 	public static function select(ModelPredicate $predicate = null)
 	{
 		$selfName = get_called_class();
@@ -979,7 +970,11 @@ abstract class Model
                 $relationship['joinColumn'] = $reverseRelationship['joinColumn'];
             }
         }
-        
+
+        if (!isset($relationship['joinColumn'])) {
+            $relationship['joinColumn'] = $relationship['column'];
+        }
+
         return $relationship;
     }
     

@@ -46,6 +46,34 @@ class DB
        return $this->driver->getConnection();
    }
 
+   /**
+    * Calls '$transactionsFunc' to process SQL queries in a middle of an SQL transaction.
+    * If the transaction hasn't already been initiated, it is started at this point.
+    *
+    * @param   callable  $transactionsFunc  Function to process SQL queries.
+    *
+    * @return  DB                           Current DB object used for method chaining.
+    */
+   public function queue($transactionsFunc)
+   {
+       $this->driver->queue($transactionsFunc);
+
+       return $this;
+   }
+
+   /**
+    * Processes the SQL transaction.
+    * If the transaction hasn't already been initiated, nothing happens.
+    *
+    * @return  DB  Current DB object used for method chaining.
+    */
+   public function process()
+   {
+       $this->driver->process();
+
+       return $this;
+   }
+
     /**
      * Executes SQL query.
      * 
