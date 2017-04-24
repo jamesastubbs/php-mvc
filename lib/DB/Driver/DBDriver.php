@@ -124,10 +124,12 @@ abstract class DBDriver
             $index = 0;
             $keyIndex = 0;
 
-            $statement = preg_replace_callback('/(?<!\\\)(?:\\\\)*\?/', function ($matches) use ($values, &$index, &$keyIndex, &$params) {
+            $statement = preg_replace_callback('/(?<!\\\\)\?/', function ($matches) use (&$values, &$index, &$keyIndex, &$params) {
                 $firstKey = true;
                 $keyStr = '';
                 $valueObjs = $values[$index];
+
+                unset($values[$index]);
 
                 $index++;
 
@@ -152,6 +154,10 @@ abstract class DBDriver
 
                 return $keyStr;
             }, $statement);
+
+            if (!empty($values)) {
+                $params = array_merge($params, $values);
+            }
         }
 
         $query = $this->connection->prepare($statement);
@@ -162,10 +168,7 @@ abstract class DBDriver
 
         $values = $params;
 
-        if (!$query->execute()) {
-            return false;
-        }
-
+        $query->execute();
         $result = null;
 
         switch (explode(' ', trim($statement))[0]) {

@@ -94,9 +94,9 @@ class DB
         return $this->driver->query($statement, $values);
     }
 
-    public function queryWithArray($statement, array $values)
+    public function queryWithArray($statement, array $values = [])
     {
-        return call_user_func_array([$this, 'query'], array_merge([$statement], $values));
+        return $this->driver->query($statement, $values);
     }
 
     public function __deconstruct()
