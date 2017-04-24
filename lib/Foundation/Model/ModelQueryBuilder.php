@@ -89,21 +89,26 @@ class ModelQueryBuilder
     
     public function innerJoin($attribute, $alias, $onExpr = null, array $params = [])
     {
-        return $this->join('INNER', $attribute, $alias, $onExpr);
+        return $this->join('INNER', $attribute, $alias, $onExpr, $params);
     }
     
     public function leftJoin($attribute, $alias, $onExpr = null, array $params = [])
     {
-        return $this->join('LEFT', $attribute, $alias, $onExpr);
+        return $this->join('LEFT', $attribute, $alias, $onExpr, $params);
     }
     
     public function rightJoin($attribute, $alias, $onExpr = null, array $params = [])
     {
-        return $this->join('RIGHT', $attribute, $alias, $onExpr);
+        return $this->join('RIGHT', $attribute, $alias, $onExpr, $params);
     }
     
     protected function join($joinMethod, $attribute, $alias, $onExpr = null, array $params = [])
     {
+        // add the parameters.
+        if (!empty($params)) {
+            $this->queryArguments = array_merge($this->queryArguments, $params);
+        }
+
         if (preg_match('/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/', $attribute) === 0) {
             return $this->joinSubQuery($joinMethod, $attribute, $alias, $onExpr);
         }
@@ -151,11 +156,6 @@ class ModelQueryBuilder
 
         // store the join definition.
         $this->joins[] = $join;
-
-        // add the parameters.
-        if (!empty($params)) {
-            $this->queryArguments = array_merge($this->queryArguments, $params);
-        }
 
         // return '$this' for method chaining.
         return $this;
@@ -351,19 +351,15 @@ class ModelQueryBuilder
     
     public function getResult()
     {
-        // get DB connection object, SQL statement and arguments.
         $db = self::getDB();
         $sql = $this->getSQL();
 
-        // execute query.
         $result = null;
         $fetchedData = null;
         
         try {
-            $fetchedData = call_user_func_array(
-                [$db, 'query'],
-                array_merge([$sql], $this->queryArguments)
-            );
+            // execute query.
+            $fetchedData = $db->queryWithArray($sql, $this->queryArguments);
         } catch (QueryException $e) {
             throw $e;
         }
