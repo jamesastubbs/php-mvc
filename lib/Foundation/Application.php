@@ -38,7 +38,11 @@ class Application
 	{
         self::$config = $__config;
         self::$configPath = $__config['ROOT'] . '/config';
-        
+
+        if (!function_exists('is_associative')) {
+            include(dirname(__DIR__) . '/_inc/functions.php');
+        }
+
         // display 503: maintenance if the application is in maintenance mode.
 		if ($this->underMaintenance()) {
 			(new __DefaultController())->viewMaintenance();
