@@ -54,12 +54,12 @@ class Application
             
             ini_set('display_errors', 'Off');
             
-            if (!set_exception_handler([$this, 'handleException']) === false) {
+            if (set_exception_handler([$this, 'handleException']) === false) {
                 echo 'Could not set exception handler.';
                 die(__FILE__ . ':' . __LINE__);
             }
             
-            if (!set_error_handler([$this, 'handleError']) === false) {
+            if (set_error_handler([$this, 'handleError']) === false) {
                 throw new \Exception('Could not set error handler.');
             }
             
