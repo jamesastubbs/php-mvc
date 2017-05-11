@@ -1,6 +1,6 @@
 <?php
 
-namespace PHPMVC\Foundation;
+namespace PHPMVC\Foundation\Interfaces;
 
 interface UserInterface
 {

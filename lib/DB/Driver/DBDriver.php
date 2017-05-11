@@ -23,55 +23,18 @@ abstract class DBDriver
      */
     public function __construct($config)
     {
-        if (!isset($config->DB_USER)) {
-            throw new \Exception('DB username not set in config.');
-        }
-
-        if (!isset($config->DB_PASS)) {
-            throw new \Exception('DB password not set in config.');
-        }
-
-        if (!isset($config->DB_HOST)) {
-            throw new \Exception('DB host not set in config.');
-        }
-
-        if (!isset($config->DB_NAME)) {
-            throw new \Exception('DB name not set in config.');
-        }
-
         $this->connection = new \PDO(
             $this->getDSNFromConfig($config),
-            $config->DB_USER,
-            $config->DB_PASS,
+            $config['username'],
+            $config['password'],
             [
                 \PDO::ATTR_EMULATE_PREPARES => false,
                 \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION
             ]
         );
-
-        $this->inDebug = Application::getConfigValue('DEBUG');
     }
 
     abstract protected function getDSNFromConfig($config);
-
-    public function query($statement, array $values = null)
-    {
-        $result = null;
-        $error = true;
-
-        try {
-            $result = $this->executeSQL($statement, $values);
-            $error = false;
-        } catch (\Exception $e) {
-            throw $e;
-        } finally {
-            if ($this->inDebug) {
-                $this->logQuery($this->getFullSQL($statement, $values), $error ? 'ERROR' : 'DEBUG');
-            }
-        }
-
-        return $result;
-    }
 
     public function getConnection()
     {
@@ -116,7 +79,7 @@ abstract class DBDriver
         return $this;
     }
 
-    protected function executeSQL(&$statement, array &$values = null)
+    public function executeSQL($statement, array $values = null)
     {
         $params = [];
 
@@ -194,7 +157,7 @@ abstract class DBDriver
         return $result;
     }
 
-    private function getFullSQL($statement, array $values = null)
+    public function getFullSQL($statement, array $values = null)
     {
         $sql = $statement;
 
@@ -213,24 +176,8 @@ abstract class DBDriver
         return $sql;
     }
 
-    protected function logQuery($query, $prefix = 'DEBUG')
-    {
-        $logDir = Application::getConfigValue('ROOT') . '/log';
-        $logPath = "$logDir/db.log";
-
-        if (!file_exists($logDir)) {
-            mkdir($logDir);
-        }
-
-        if (!file_exists($logPath)) {
-            touch($logPath);
-        }
-
-        file_put_contents($logPath, '[' . date('Y-m-d H:i:s') . '][' . ($prefix) . '] ' . $query . PHP_EOL, FILE_APPEND);
-    }
-
     public function __deconstruct()
     {
-        $this->connection = null;
+        unset($this->connection);
     }
 }

@@ -3,10 +3,12 @@
 namespace PHPMVC\Foundation\Model;
 
 use PHPMVC\Foundation\Exception\QueryException;
+use PHPMVC\Foundation\Exception\ServiceDependencyException;
 use PHPMVC\Foundation\Model\ClassResolver;
 use PHPMVC\Foundation\Model\Model;
 use PHPMVC\Foundation\Model\Relationship\ToManyRelationship;
 use PHPMVC\Foundation\Model\Relationship\ToOneRelationship;
+use PHPMVC\Foundation\Service\DBService;
 
 class ModelQueryBuilder
 {
@@ -32,11 +34,25 @@ class ModelQueryBuilder
     private $selectColumns = null;
     private $selectModel = null;
     private $whereExpr = null;
+
+    /**
+     * @var  array
+     */
     protected $queryArguments = [];
-    protected static $db = null;
-    
+
+    /**
+     * @var  DBService
+     */
+    protected static $dbService;
+
     public function __construct($data, $isModel)
     {
+        if (self::getDBService() === null) {
+            throw new ServiceDependencyException(
+                'Cannot execute query builder without the service of \'' . DBService::class . '\' being registered.'
+            );
+        }
+
         if ($isModel) {
             $this->from(
                 $data['model'],
@@ -47,14 +63,14 @@ class ModelQueryBuilder
         }
     }
     
-    final public static function setDB($db)
+    final public static function setDBService(DBService $dbService)
     {
-        self::$db = $db;
+        self::$dbService = $dbService;
     }
     
-    final protected static function getDB()
+    final protected static function getDBService()
     {
-        return self::$db;
+        return self::$dbService;
     }
     
     public static function select($modelOrColumns, $alias = null)
@@ -351,7 +367,7 @@ class ModelQueryBuilder
     
     public function getResult()
     {
-        $db = self::getDB();
+        $dbService = self::getDBService();
         $sql = $this->getSQL();
 
         $result = null;
@@ -359,7 +375,7 @@ class ModelQueryBuilder
         
         try {
             // execute query.
-            $fetchedData = $db->queryWithArray($sql, $this->queryArguments);
+            $fetchedData = $dbService->queryWithArray($sql, $this->queryArguments);
         } catch (QueryException $e) {
             throw $e;
         }

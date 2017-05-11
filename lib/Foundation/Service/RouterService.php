@@ -1,37 +1,82 @@
 <?php
 
-namespace PHPMVC\Foundation;
+namespace PHPMVC\Foundation\Service;
 
 use PHPMVC\Foundation\Application;
+use PHPMVC\Foundation\Interfaces\ServiceInterface;
+use PHPMVC\Foundation\Interfaces\ServiceableInterface;
+use PHPMVC\Foundation\Services;
+use PHPMVC\Foundation\Service\HTTPService;
 
-class Router
+class RouterService implements ServiceInterface, ServiceableInterface
 {
+    /**
+     * @var  string
+     */
     private $name = null;
-    private $namespaces = null;
-    private $rootPath = null;
-    private $routes = [];
-    private $baseRoutes = [];
-    
-    public function __construct($name, $rootPath, array $namespaces)
-    {
-        $this->name = $name;
-        $this->namespaces = $namespaces;
-        $this->rootPath = $rootPath;
 
-        $this->processRoutesFromPath("$rootPath/config/routes.json");
+    /**
+     * @var  array
+     */
+    private $namespaces = null;
+
+    /**
+     * @var  string
+     */
+    private $rootPath = null;
+
+    /**
+     * @var  array
+     */
+    private $routes = [];
+
+    /**
+     * @var  array
+     */
+    private $baseRoutes = [];
+
+    /**
+     * @var  Services
+     */
+    private $services = null;
+
+    public function setServices(Services $services)
+    {
+        $this->services = $services;
     }
 
     /**
-     * Fetches the JSON content from the file located under '$path'.
-     * The JSON data is then processed to populate the routes within this class instance to be used later on.
-     *
-     * @param  string  $path  Location of the JSON routes file.
+     * {@inheritdoc}
      */
-    private function processRoutesFromPath($path)
+    public function onServiceStart()
     {
+        $httpService = $this->services->get(
+            $this->services->getNameForServiceClass(HTTPService::class)
+        );
+
+        $appConfig = $this->services->get('app.config', true)->get('app');
+
+        $namespaces = $appConfig['loader']->getPrefixesPsr4(); // psr-0 is deprecated and therefore not supported.
+        $namespacesKeys = array_keys($namespaces);
+
+        // iterate through all namespaces and remove trailing slash.
+        array_walk($namespacesKeys, function($key) use (&$namespaces) {
+            $namespaces[rtrim($key, '\\')] = $namespaces[$key];
+
+            unset($namespaces[$key]);
+        });
+
+        unset($namespacesKeys);
+
+        $this->name = $appConfig['name'];
+        $this->namespaces = $namespaces;
+        $this->rootPath = $appConfig['root'];
+
+        // fetches the JSON content from the file located under '$path'.
+        // the JSON data is then processed to populate the routes within this class instance to be used later on.
         $routes = $this->getRoutesFromHTTPMethod(
-            Application::getHTTPMethod(),
-            $path
+            $httpService->getRequestMethod(),
+            "{$this->rootPath}/config/routes.json"
         );
 
         $this->processRoutes($routes);
@@ -98,16 +143,16 @@ class Router
                 }
                 continue;
             }
-            
+
             $routePathI = 0;
             $routePathReplacements = [];
-            
+
             if (!preg_match_all('/^([^\:\:]+)::([A-Za-z0-9_]+)\(([^\)]+)?\)/', $route, $routeParts)) {
                 throw new \Exception("Invalid route: '$route'");
             }
-            
+
             array_shift($routeParts);
-            
+
             // get controller, action and parameters values from the regex output.
             $controller = $routeParts[0][0];
             $action = $routeParts[1][0];
@@ -119,66 +164,66 @@ class Router
                     '__order' => [],
                     '__regex' => []
                 ];
-                
+
                 preg_match_all('/(?:^|, ?)(?:(-?(?:(?:[0-9]\d*))(?:\.\d+)?)|([A-Za-z0-9_]+)|(\'[^\'\\\]*(?:\\.[^\'\\\]*)*\'))/', $parametersString, $parametersParts);
                 array_shift($parametersParts);
-                
+
                 $parametersCount = count($parametersParts[0]);
-                
+
                 for ($i = 0; $i < $parametersCount; $i++) {
                     $parameterName = null;
                     $parameterValue = null;
-                    
+
                     if ($parametersParts[0][$i] !== '') {
                         // group 1 has a value, this is a number.
-                        
+
                         $parameterName = "int_$i";
                         $parameterValue = strpos($parametersParts[0][$i], '.') !== false ? floatval($parametersParts[0][$i]) : intval($parametersParts[0][$i]);
                     } else if ($parametersParts[1][$i] !== '') {
                         // group 2 has a value, this is a variable referenced in the '$routePath'.
-                        
+
                         $parameterName = $parametersParts[1][$i];
                     } else if ($parametersParts[2][$i] !== '') {
                         // group 3 has a value, this is a string.
-                        
+
                         $parameterName = "str_$i";
                         $parameterValue = substr($parametersParts[2][$i], 1, -1);
                     }
-                    
+
                     if ($parameterName !== null) {
                         $parameters['__order'][] = $parameterName;
                         $parameters[$parameterName] = $parameterValue;
                     }
                 }
-                
+
                 // retrieve all route parts, so that we can build continue to build the route URL.
                 $routePath = preg_replace_callback('/\{([A-Za-z0-9_]+)(?:\:(?:\ )?(?:\'([^\']*(?:\.[^\']*)*)\'))?\}/', function ($matches) use (&$parameters, &$routePathI, &$routePathReplacements) {
                     $variable = $matches[1];
                     $regex = '(' . (isset($matches[2]) ? $matches[2] : '[A-Za-z0-9_]+') . ')';
-                    
+
                     if (!array_key_exists($variable, $parameters)) {
                         throw new \Exception("Route variable '$variable' could not be found.");
                     }
-                    
+
                     $parameters['__regex'][$variable] = $regex;
-                    
+
                     $routePathI++;
                     $key = "\$__$routePathI";
                     $routePathReplacements["\\$key"] = $regex;
-                    
+
                     return $key;
                 }, $routePath);
             }
-            
+
             $routePath = '/^' . preg_quote($routePath, '/');
-            
+
             foreach ($routePathReplacements as $key => $replacement) {
                 $routePath = str_replace($key, $replacement, $routePath);
             }
-            
+
             // append GET parameter regex.
             $routePath .= '(?:(?:\?\S[^ \?]+)|)$/';
-            
+
             $this->routes[$routePath] = [
                 'controller' => $controller,
                 'action' => $action,
@@ -186,15 +231,15 @@ class Router
             ];
         }
     }
-    
+
     public function matchRoute($url, &$controller, &$action, &$parameters)
     {
         $urlParts = explode('/', $url);
-        
+
         $url = "/$url";
         $routesKeys = array_keys($this->routes);
         $route = null;
-        
+
         foreach ($routesKeys as $routeKey) {
             if (preg_match_all($routeKey, $url, $urlMatches)) {
                 array_shift($urlMatches);
@@ -204,97 +249,97 @@ class Router
                 break;
             }
         }
-        
+
         if ($route !== null) {
             $controller = $route['controller'];
             $action = $route['action'];
             $parameters = [];
-            
+
             $urlMatchesI = 0;
             $routeParameters = $route['parameters'];
             $routeParametersOrder = $routeParameters['__order'];
             $routeParametersCount = count($routeParametersOrder);
-            
+
             for ($i = 0; $i < $routeParametersCount; $i++) {
                 $routeParameterName = $routeParametersOrder[$i];
                 $routeParameter = $routeParameters[$routeParameterName];
-                
+
                 // if the parameter is null,
                 // add in the value from the received URL match.
                 if ($routeParameter === null) {
                     $routeParameter = $urlMatches[$urlMatchesI][0];
                     $urlMatchesI++;
                 }
-                
+
                 // add the parameter.
                 $parameters[] = $routeParameter;
             }
-            
+
             if ($routeParametersCount !== count($parameters)) {
                 // we set these as null so that we proceed to continue to search for the called controller.
                 $parameters = null;
                 $route = null;
             }
         }
-        
+
         // search for existing controller as last resort.
         if ($route === null) {
             $action = null;
             $controller = null;
             $parameters = null;
-            
+
             $baseRoutes = array_merge([$this->name], $this->baseRoutes);
-            
-            $_controller = (isset($urlParts[0]) && $urlParts[0] !== '') ? $urlParts[0] : null;
+
+            $_controller = isset($urlParts[0]) && $urlParts[0] !== '' ? $urlParts[0] : null;
             $_action = isset($urlParts[1]) ? $urlParts[1] : null;
-            
+
             if ($_controller !== null) {
                 foreach ($baseRoutes as $baseRoute) {
                     // setup controler class name so it is relative to the namespace.
                     $__controller = $baseRoute . '\\Controller\\' . ucfirst($_controller) . 'Controller';
                     $_parameters = [];
-                    
+
                     $urlPartsCount = count($urlParts);
-                    
+
                     // start at index 2 as the first two parts dictate the calling controller and the action.
                     for ($i = 2; $i < $urlPartsCount; $i++) {
                         $_parameters[] = $urlParts[$i];
                     }
-                    
+
                     if (class_exists($__controller)) {
                         if ($_action === null) {
                             $_action = 'index';
                         }
-                        
+
                         $continue = false;
                         $_parametersLength = count($_parameters);
-                        
+
                         try {
                             $reflectionMethod = new \ReflectionMethod($__controller, $_action);
-                            
+
                             if (!$reflectionMethod->isPublic()) {
                                 $continue = true;
                             }
-                            
+
                             $reflectionParameters = array_filter($reflectionMethod->getParameters(), function ($reflectionParameter) {
                                 return !$reflectionParameter->isOptional();
                             });
-                            
+
                             if (count($reflectionParameters) > $_parametersLength) {
                                 $continue = true;
                             }
                         } catch (\Exception $e) {
                             $continue = true;
                         }
-                        
+
                         if ($continue) {
                             continue;
                         }
-                        
+
                         $action = $_action;
                         $controller = $__controller;
                         $parameters = $_parameters;
-                        
+
                         break;
                     }
                 }
@@ -303,7 +348,7 @@ class Router
                 $action = 'index';
             }
         }
-        
+
         return $route !== null || $controller !== null;
     }
 }

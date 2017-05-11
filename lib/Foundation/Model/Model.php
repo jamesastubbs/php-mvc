@@ -13,6 +13,8 @@ use PHPMVC\Foundation\Model\ClassResolver;
 use PHPMVC\Foundation\Model\ModelQueryBuilder;
 use PHPMVC\Foundation\Model\Relationship\ToManyRelationship;
 use PHPMVC\Foundation\Model\Relationship\ToOneRelationship;
+use PHPMVC\Foundation\Service\DBService;
+use PHPMVC\Foundation\Services;
 
 abstract class Model
 {
@@ -30,21 +32,32 @@ abstract class Model
     private $_attributes = [];
     private $_cachedAttributes = [];
     private $_relationships = [];
+
+    /**
+     * @var  DBService
+     */
+    private $_dbService = null;
+
+    /**
+     * @var  Services
+     */
+    protected $services = null;
+
     public static $primaryKey = null;
     public static $relationships = [];
     public static $tableName;
-    public static $columns;
+    public static $columns = [];
     private static $tmpID = 0;
-    protected static $db = null;
+
+    /**
+     * @var  DBService
+     */
+    protected static $dbService = null;
+
     protected static $_cachedModels = [];
-    protected static $_cacheSetup = false;
     
     public function __construct()
     {
-        if (Model::$_cacheSetup === null) {
-            // TODO: initalise cache handler.
-        }
-        
         $selfClass = get_class($this);
         $primaryKey = $selfClass::$primaryKey;
         $columns = $selfClass::$columns;
@@ -69,17 +82,6 @@ abstract class Model
         $this->{$primaryKey} = self::getTmpID();
     }
 
-    final public static function setDB($db)
-    {
-        self::$db = $db;
-        $selfClass = get_called_class();
-    }
-
-    final protected static function getDB()
-    {
-        return self::$db;
-    }
-    
 	final protected function getTmp($key)
 	{
 		if (!isset($this->_tmp)) {
@@ -140,88 +142,7 @@ abstract class Model
         
         return $relatingModel;
     }
-    
-    final private static function mapModelRelationships($parentModel, $childModel, $joinDefinition)
-    {
-        $parentModelClass = get_class($parentModel);
-        $childModelName = get_class($childModel);
-        preg_match_all('/^([A-Za-z0-9_]+)\\\Model\\\([A-Za-z0-9_]+)$/', $childModelName, $childModelMatches);
-        array_shift($childModelMatches);
-        $childModelName = $childModelMatches[0][0] . ':' . $childModelMatches[1][0];
-        
-        $relationshipProperty = lcfirst($childModelMatches[1][0]);
-        
-        $joinDefinition['method'] = 'guess';
-        $relationships = $parentModelClass::$relationships;
-        
-        foreach ($relationships as $relationshipName => $relationship) {
-            // if relationship is defined in class, we'll go by that definition.
-            if ($relationship['model'] === $childModelName) {
-                
-                // get reverse relationship if the current is defined as an 'inverse'.
-                if (isset($relationship['inverse'])) {
-                    $relationship = self::getReverseRelationship($relationship);
-                }
-                
-                // change join method, so that we don't guess the relationship name.
-                $joinDefinition['method'] = $relationship['relationship'];
-                
-                $joinDefinition['property_key'] = $relationshipName;
-                $joinDefinition['primary_key'] = $relationship['column'];
-                
-                // set the foreign key as the same column name of the primary key, if the key 'joinColumn' doesn't exist.
-                $joinDefinition['foreign_key'] = isset($relationship['joinColumn']) ? $relationship['joinColumn'] : $relationship['column'];
-                
-                // store the relationship name as we'll use this as the property name to store the relationship array.
-                $relationshipProperty = $relationshipName;
-                
-                break;
-            }
-        }
-        
-        if ($joinDefinition['method'] !== 'guess') {
-            $propertyKey = $joinDefinition['property_key'];
-            $relationshipType = $joinDefinition['method'];
-            
-            if ($relationshipType === self::RELATIONSHIP_ONE_TO_MANY || $relationshipType === self::RELATIONSHIP_MANY_TO_MANY) {
-                if (!property_exists($parentModel, $propertyKey)) {
-                    $parentModel->{$propertyKey} = [];
-                }
-                
-                // TODO: investigate why the child mode is being added twice, then fix.
-                if (!in_array($childModel, $parentModel->{$propertyKey})) {
-                    $parentModel->{$propertyKey}[] = $childModel;
-                }
-            } else {
-                $parentModel->{$propertyKey} = $childModel;
-            }
-        } else {
-            $add = true;
-            $childModelKey = lcfirst($childModelMatches[1][0]);
-            
-            if (property_exists($parentModel, $relationshipProperty)) {
-                $storedChildModel = $parentModel->{$relationshipProperty};
-                
-                if ($storedChildModel === $childModel) {
-                    $add = false;
-                } else {
-                    unset($parentModel->{$childModelKey});
-                    $parentModel->{$childModelKey . 's'} = [$storedChildModel];
-                }
-            }
-            
-            if ($add) {
-                if (property_exists($parentModel, $relationshipProperty . 's')) {
-                    if (!in_array($childModel, $parentModel->{$relationshipProperty. 's'})) {
-                        array_push($parentModel->{$childModelKey. 's'}, $childModel);
-                    }
-                } else {
-                    $parentModel->{$relationshipProperty} = $childModel;
-                }
-            }
-        }
-    }
-    
+
     public static function findAll($withRelationships = true)
     {
         $selfClass = get_called_class();
@@ -271,15 +192,17 @@ abstract class Model
     public function create($fetchAfter = false)
     {
         $attributes = $this->_attributes;
-        $db = self::$db;
+        $dbService = self::$dbService;
         $selfClass = get_class($this);
         $primaryKey = $selfClass::$primaryKey;
         $selfRelationships = $selfClass::$relationships;
         $tableName = $selfClass::$tableName;
-        $statement = "INSERT INTO {$db->dbName}.{$tableName}(";
+        $statement = "INSERT INTO {$dbService->dbName}.{$tableName}(";
         $statementPart = ') VALUES (';
         $first = true;
         $arguments = [];
+
+        $storedRelationships = [];
 
         foreach ($this->_relationships as $relationshipName => $relationship) {
             if (!isset($selfRelationships[$relationshipName])) {
@@ -295,6 +218,24 @@ abstract class Model
                 $relatedModel = $relationship->get();
 
                 $attributes[$column] = $relatedModel === null ? null : $relatedModel->{$joinColumn};
+            } else {
+                $relatedModels = [];
+
+                foreach ($relationship->getAll() as &$relatedModel) {
+                    $relatedModels[] = $relatedModel;
+                }
+
+                if (!isset($storedRelationships[$relationshipName])) {
+                    $storedRelationships[$relationshipName] = [
+                        'definition' => $relationshipDefinition,
+                        'models' => []
+                    ];
+                }
+
+                $storedRelationships[$relationshipName]['models'] = array_merge(
+                    $storedRelationships[$relationshipName]['models'],
+                    $relatedModels
+                );
             }
         }
 
@@ -318,8 +259,25 @@ abstract class Model
 
         $statement .= $statementPart . ');';
 
-        $lastInsertId = self::$db->queryWithArray($statement, !empty($arguments) ? $arguments : null);
+        $cachedID = $this->{$primaryKey};
+        $lastInsertId = $dbService->queryWithArray($statement, $arguments);
         $this->{$primaryKey} = $lastInsertId;
+
+        foreach ($storedRelationships as $relationshipName => $relationship) {
+            $models = $relationship['models'];
+
+            if (empty($models)) {
+                continue;
+            }
+
+            $definition = $relationship['definition'];
+            $column = $definition['column'];
+            $joinColumn = $definition['joinColumn'];
+
+            foreach ($models as &$model) {
+                $model->{$joinColumn} = $this->{$column};
+            }
+        }
 
         if ($fetchAfter && !empty($columns)) {
             $statement = 'SELECT ';
@@ -336,7 +294,7 @@ abstract class Model
             }
 
             $statement .= " FROM $tableName WHERE $primaryKey = ? LIMIT 1";
-            $result = $db->queryWithArray($statement, $this->{$primaryKey});
+            $result = $dbService->queryWithArray($statement, $this->{$primaryKey});
 
             if (empty($result)) {
                 return false;
@@ -357,89 +315,17 @@ abstract class Model
         return (bool)$this->{$primaryKey};
     }
 
-	public static function select(ModelPredicate $predicate = null)
-	{
-		$selfName = get_called_class();
-		return $selfName::selectColumns('*', $predicate);
-	}
-	
-	public static function selectColumns($columns, ModelPredicate $predicate = null)
-	{
-		$selfName = get_called_class();
-		$statement = 'SELECT ';
-		if (gettype($columns) == 'string') {
-			if (preg_match('/\ /', $columns)) {
-				$strComponents = explode(' ', $columns);
-				for ($i = 0; $i < count($strComponents); $i++) {
-					$strComponent = $strComponents[$i];
-					if (preg_match('/\\$::(\w+)\./', $strComponent)) {
-						$strComponentParts = explode('.', $strComponent);
-						$modelName = preg_replace('/\\\$::/', '', $strComponentParts[0]);
-						$columnName = $strComponentParts[1];
-						$strComponents[$i] = $modelName::$tableName . ".$columnName";
-					}
-				}
-				$columns = implode(' ', $strComponents);
-				
-			}
-			$statement .= "$columns ";
-		} else {
-			$first = true;
-			foreach ($columns as $column) {
-				if ($first)
-					$first = false;
-				else
-					$statement .= ', ';
-				
-				if (gettype($column) != 'string') {
-					$subFirst = true;
-					foreach ($column as $columnName) {
-						if ($subFirst)
-							$subFirst = false;
-						else
-							$statement .= ', ';
-						
-						$statement .= $column->tableName . ".$columnName";
-					}
-				} else
-					$statement .= $column;
-			}
-		}
-		
-		$statement .= ' FROM ' . $selfName::$tableName;
-        
-		if ($predicate !== null) {
-            $classParts = explode('\\', $selfName);
-            $modelClass = array_pop($classParts);
-            $predicate->addClasses([$modelClass => $selfName]);
-			$statement .= ' ' . $predicate->getFormattedQuery();
-        }
-        
-        $fetchedData = self::$db->query($statement, (isset($predicate) ? $predicate->arguments : null));
-        
-		$fetchedObjects = [];
-        
-		foreach ($fetchedData as $data) {
-			$model = new $selfName();
-			foreach ($data as $key => $value) {
-				$model->_attributes[$key] = $value;
-                
-                if ($key !== $selfName::$primaryKey) {
-				    $model->{"__old_$key"} = self::getColumnValue($key, $value, false);
-                }
-			}
-			array_push($fetchedObjects, $model);
-		}
-        
-		return $fetchedObjects;
-	}
+    public static function select($alias)
+    {
+        return ModelQueryBuilder::select(self::class, $alias);
+    }
 
     public function update()
     {
         $selfClass = get_called_class();
         $primaryKey = $selfClass::$primaryKey;
-        $db = self::$db;
-        $dbName = $db->dbName;
+        $dbService = self::$dbService;
+        $dbName = $dbService->dbName;
         $tableName = $selfClass::$tableName;
         $statement = "UPDATE $dbName.$tableName SET ";
         $arguments = [];
@@ -471,7 +357,7 @@ abstract class Model
         if (!empty($arguments)) {
             $statement .= " WHERE $primaryKey = " . $this->{$primaryKey};
 
-            if (!call_user_func_array([$db, 'query'], [$statement, $arguments])) {
+            if (!call_user_func_array([$dbService, 'query'], [$statement, $arguments])) {
                 return false;
             }
         }
@@ -527,7 +413,7 @@ abstract class Model
             );
         }
 
-        $db = self::$db;
+        $dbService = self::$dbService;
         $relationshipStore = $this->{$relationshipName};
         $selfClass = get_called_class();
 
@@ -550,7 +436,7 @@ abstract class Model
         if (!empty($deletes)) {
             $deleteStatement = "DELETE FROM {$joinTable} WHERE " . implode(' OR ', $deletes);
 
-            if (!$db->query($deleteStatement)) {
+            if (!$dbService->query($deleteStatement)) {
                 return false;
             }
         }
@@ -566,7 +452,7 @@ abstract class Model
         if (!empty($inserts)) {
             $insertStatement = "INSERT INTO {$joinTable} ({$joinColumns[0]}, {$joinColumns[1]}) VALUES " . implode(', ', $inserts);
 
-            if (!$db->query($insertStatement)) {
+            if (!$dbService->query($insertStatement)) {
                 return false;
             }
         }
@@ -643,9 +529,9 @@ abstract class Model
         $tableName = $selfClass::$tableName;
 
         $statement = "UPDATE {$tableName} SET {$column} = {$joinColumnValue} WHERE {$primaryKey} = {$primaryValue};";
-        $db = self::$db;
+        $dbService = self::$dbService;
 
-        return $db->query($statement) !== false;
+        return $dbService->query($statement) !== false;
     }
 
     protected function createUpdateRelationshipException($relationshipName, $relationship, $expectedType)
@@ -680,7 +566,7 @@ abstract class Model
 		$selfName = get_class($this);
         $selfPrimaryKey = $selfName::$primaryKey;
         $selfTableName = $selfName::$tableName;
-		return self::$db->query("DELETE FROM $selfTableName WHERE $selfPrimaryKey = ?", $this->{$selfPrimaryKey});
+		return self::$dbService->query("DELETE FROM $selfTableName WHERE $selfPrimaryKey = ?", $this->{$selfPrimaryKey});
 	}
 	
     // TODO: decide if this is being used. If not, deprecate or delete.
@@ -985,11 +871,11 @@ abstract class Model
         if (isset($selfClass::$relationships[$name])) {
             return $this->_relationships[$name];
         }
-        
+
         if (array_key_exists($name, $this->_attributes)) {
             return $this->_attributes[$name];
         }
-        
+
         return null;
     }
     
@@ -1033,7 +919,17 @@ abstract class Model
         
         Model::$_cachedModels[$modelClass]["$modelID"] = $model;
     }
-    
+
+    final public static function setDBService(DBService $dbService)
+    {
+        self::$dbService = $dbService;
+    }
+
+    final protected static function getDBService()
+    {
+        return self::$dbService;
+    }
+
     protected static function getTmpID()
     {
         Model::$tmpID--;

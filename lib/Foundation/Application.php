@@ -10,113 +10,86 @@ namespace PHPMVC\Foundation;
 
 use PHPMVC\DB\DB;
 use PHPMVC\Foundation\Exception\NotFoundException;
+use PHPMVC\Foundation\HTTP\Response;
 use PHPMVC\Foundation\Model\Model;
 use PHPMVC\Foundation\Model\ModelQueryBuilder;
 use PHPMVC\Foundation\Router;
+use PHPMVC\Foundation\Service\ConfigService;
+use PHPMVC\Foundation\Services;
 
 class Application
 {
-    const METHOD_DELETE = 'DELETE';
-    const METHOD_GET = 'GET';
-    const METHOD_HEAD = 'HEAD';
-    const METHOD_OPTIONS = 'OPTIONS';
-    const METHOD_POST = 'POST';
-    const METHOD_PUT = 'PUT';
-    const METHOD_UNKNOWN = '_UNKNOWN';
+    /**
+     * @var  Services
+     */
+    protected $services = null;
 
-    private $action = null;
-	private $controller = null;
-    private $db = null;
+    /**
+     * @var  array  Last recorded error.
+     */
     private $error = null;
+
+    /**
+     * @var  array  Last recorded error backtrace.
+     */
     private $errorBacktrace = null;
-	private $parameters = array();
-    private $router = null;
-    private static $config = null;
-    private static $configPath = null;
-    
-	public function __construct($__config)
-	{
-        self::$config = $__config;
-        self::$configPath = $__config['ROOT'] . '/config';
+
+    /**
+     * @var  string
+     */
+    private $rootPath = null;
+
+    /**
+     * @param  array  $config
+     */
+    public function __construct($config)
+    {
+        $appConfig = $config['app'];
+        $this->rootPath = $config['app']['root'];
 
         if (!function_exists('is_associative')) {
             include(dirname(__DIR__) . '/_inc/functions.php');
         }
 
-        // display 503: maintenance if the application is in maintenance mode.
-		if ($this->underMaintenance()) {
-			(new __DefaultController())->viewMaintenance();
-			exit(0);
-		}
-        
-        if (!$__config['DEBUG']) {
+        $this->setupServices($config);
+
+        if (!$this->services->has('app.debug')) {
             error_reporting(E_ALL & ~E_NOTICE);
-            
             ini_set('display_errors', 'Off');
-            
+        }
+
+        // display 503: service unavailable if the application is in maintenance mode.
+        if ($this->underMaintenance()) {
+            (new __DefaultController())->viewMaintenance();
+            exit(0);
+        }
+
+        if (!$inDebug) {
             if (set_exception_handler([$this, 'handleException']) === false) {
                 echo 'Could not set exception handler.';
                 die(__FILE__ . ':' . __LINE__);
             }
-            
-            if (set_error_handler([$this, 'handleError']) === false) {
-                throw new \Exception('Could not set error handler.');
-            }
-            
-            register_shutdown_function([$this, 'shutdownFunction']);
         }
-    
+
+        if (set_error_handler([$this, 'handleError']) === false) {
+            throw new \Exception('Could not set error handler.');
+        }
+
+        register_shutdown_function([$this, 'shutdownFunction']);
+
         session_start();
-        
-        $namespaces = $__config['LOADER']->getPrefixesPsr4();
-        $namespacesKeys = array_keys($namespaces);
-        
-        array_walk($namespacesKeys, function($key) use (&$namespaces) {
-            $namespaces[rtrim($key, '\\')] = $namespaces[$key];
-            
-            unset($namespaces[$key]);
-        });
-        
-        unset($namespacesKeys);
-        
-        $this->router = new Router($__config['NAME'], $__config['ROOT'], $namespaces);
-        
-		if (!$this->matchRoute()) {
-            $message = 'Cannot match any route.';
-            
-            if ($this->controller !== null && !class_exists($this->controller)) {
-                $message = "The controller with the class '{$this->controller}' does not exist.";
-            }
-            
-			throw new NotFoundException($message);
-		}
-        
-        $this->controller = new $this->controller();
-		
-        // setup user handling in Controller class.
-        if (isset($__config['USR_CLASS']) && isset($__config['USR_SESSION_KEY'])) {
-            Controller::setUserClass(
-                $__config['USR_CLASS'],
-                $__config['USR_SESSION_KEY']
-            );
-        }
-        
-		// setup database connection if config is set.
-        if (isset(self::$config['DB_DRIVER'])) {
-            $this->db = new DB(self::$config);
-            Controller::setDB($this->db);
-            Model::setDB($this->db);
-            ModelQueryBuilder::setDB($this->db);
-        }
-        
-        $reflection = new \ReflectionMethod($this->controller, $this->action);
-        if ($reflection->isPublic()) {
-            call_user_func_array([$this->controller, $this->action], $this->parameters);
-        } else {
-            throw new NotFoundException("The method '{$this->action}' within the class '{$this->controller}' is not publically accessible.");
-		}
-	}
-	
+    }
+
+    public function getRootPath()
+    {
+        return $this->rootPath;
+    }
+
+    public function getServices()
+    {
+        return $this->services;
+    }
+
     public function handleError($errorNo, $errorStr, $errorFile, $errorLine, $errorContext)
     {
         $this->error = [
@@ -131,7 +104,7 @@ class Application
         $this->errorBacktrace = $errorBacktrace;
     }
     
-    public function handleException(\Exception $exception)
+    public function handleException(\Error $exception)
     {
         $controller = new \PHPMVC\Foundation\__DefaultController();
         $exceptionClass = get_class($exception);
@@ -142,13 +115,81 @@ class Application
             $controller->viewError(500);
         }
     }
-    
+
+    public function handleIncomingRequest()
+    {
+        // sanitise the incoming URL.
+        $url = urldecode(ltrim(rtrim(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/', '/'), '/'));
+        $urlGETStart = strpos($url, '?');
+
+        // strip out GET parameters if they exist within the request URI.
+        if ($urlGETStart !== false) {
+            $url = substr($url, 0, $urlGETStart);
+        }
+
+        $router = $this->services->get('app.router', true);
+
+        if (!$router->matchRoute($url, $controllerClass, $action, $parameters)) {
+            $message = 'Cannot match any route.';
+
+            if ($controllerClass !== null && !class_exists($controllerClass)) {
+                $message = "The controller with the class '{$controllerClass}' does not exist.";
+            }
+
+            throw new NotFoundException($message);
+        }
+        
+        $controller = new $controllerClass();
+        $controller->setServices($this->services);
+
+        // setup user handling in Controller class.
+        // TODO: refactor with the use of services.
+        if (isset($config['user']['class']) && isset($config['user']['sessionKey'])) {
+            Controller::setUserClass(
+                $config['user']['class'],
+                $config['user']['sessionKey']
+            );
+        }
+
+        $reflection = new \ReflectionMethod($controller, $action);
+
+        if (!$reflection->isPublic()) {
+            throw new NotFoundException("The method '{$action}' within the class '{$controllerClass}' is not publically accessible.");
+        }
+
+        $response = call_user_func_array([$controller, $action], $parameters);
+
+        if ($response === null) {
+            throw new \Exception(
+                'No ' . Response::class . " or subclass was returned from the method '$action' in the controller '$controllerClass'."
+            );
+        } elseif (!$response instanceof Response) {
+            throw new \Exception(
+               "The return value from the method '$action' in the controller '$controllerClass' which is of type "
+               . get_class($response)
+               . ' is not an instance of '
+               . Response::class
+               . '.'
+            );
+        }
+
+        $this->services->get('app.renderer', true)->render($response);
+    }
+
     public function shutdownFunction()
     {
         $error = $this->error ?: error_get_last();
-        
-        if ($error !== null) {
+        $hasDebug = $this->services->has('debug');
+
+        if ($hasDebug) {
+            $debugService = $this->services->get('debug');
+
+            $debugService->finishProfiling();
+        }
+
+        if ($error !== null && !$hasDebug) {
             $controller = new \PHPMVC\Foundation\__DefaultController();
+            $controller->setServices($this->services);
             $controller->viewError(500);
         }
     }
@@ -206,60 +247,24 @@ class Application
 		$logFileContents .= '(' . date('Y-m-d H:i:s') . ") (Client: {$_SERVER['REMOTE_ADDR']}) ($backtraceStr) $logText\n";
 		file_put_contents($logFile, $logFileContents);
 	}
-	
-    public static function getConfigValue($key)
-    {
-        $allowedKeys = [
-            'DEBUG',
-            'MAINTENANCE',
-            'NAME',
-            'ROOT',
-            'TITLE',
-            'WHITELIST'
-        ];
-        
-        if (in_array($key, $allowedKeys)) {
-            return self::$config[$key];
-        }
-                
-        return null;
-    }
 
-    /**
-     * @return  string  Method name of the received HTTP request.
-     */
-    public static function getHTTPMethod()
+    public function isWhitelisted()
     {
-        $method = strtoupper($_SERVER['REQUEST_METHOD']);
-        $methods = [
-            self::METHOD_DELETE,
-            self::METHOD_GET,
-            self::METHOD_HEAD,
-            self::METHOD_OPTIONS,
-            self::METHOD_POST,
-            self::METHOD_PUT
-        ];
+        $configService = $this->services->get('app.config');
 
-        if (!in_array($method, $methods)) {
-            $method = self::METHOD_UNKNOWN;
+        if ($configService->get('app.whitelist') !== true) {
+            return false;
         }
 
-        unset($methods);
-
-        return $method;
-    }
-
-    public static function isWhitelisted()
-    {
         $whitelisted = false;
-        
-        $rootDir = self::getConfigValue('ROOT');
+
+        $rootDir = $configService->get('app.root');
         $whiteListFile = "$rootDir/config/whitelist.txt";
         $whitelistFileHandler = @fopen($whiteListFile, 'r');
-        
+
         if ($whitelistFileHandler !== null) {
             $ips = explode(PHP_EOL, fread($whitelistFileHandler, filesize($whiteListFile)));
-            
+
             foreach ($ips as $ip) {
                 if (preg_match('/^(?!#).+/', $ip) && preg_match("/$ip/", $_SERVER['REMOTE_ADDR'])) {
                     $whitelisted = true;
@@ -267,49 +272,40 @@ class Application
                 }
             }
         }
-        
+
         @fclose($whitelistFileHandler);
-        
+
         return $whitelisted;
     }
-    
-	private function matchRoute()
-	{
-        $url = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
-        $url = urldecode(ltrim(rtrim($url, '/'), '/'));
-        $urlGETStart = strpos($url, '?');
 
-        // strip out GET parameters if they exist within the request URI.
-        if ($urlGETStart !== false) {
-            $url = substr($url, 0, $urlGETStart);
+    protected function setupServices($config)
+    {
+        $services = new Services();
+
+        $services->register('app.config', ConfigService::class);
+        $configService = $services->get('app.config');
+
+        foreach ($config as $name => $value) {
+            $configService->set($name, $value);
         }
 
-        $result = $this->router->matchRoute($url, $controller, $action, $parameters);
-        
-        $this->controller = $controller;
-        $this->action = $action;
-        $this->parameters = $parameters ?: [];
-        
-        return $result;
+        include($this->rootPath . '/config/services.php');
+
+        $this->services = $services;
     }
-	
-	private function underMaintenance()
-	{
-        if (self::getConfigValue('MAINTENANCE') === true) {
-            $whitelisted = self::getConfigValue('WHITELIST') && self::isWhitelisted();
-            
-			return !$whitelisted;
-		}
-		
-		return false;
-	}
-		
-	public function __deconstruct()
-	{
-		$this->db = null;
-        Controller::setDB(null);
+
+    private function underMaintenance()
+    {
+        if ($this->services->get('app.config')->get('app.maintenance') === true) {
+            return !$this->isWhitelisted();
+        }
+
+        return false;
+    }
+
+    public function __deconstruct()
+    {
         Controller::setUserClass(null, null);
-        Model::setDB(null);
-        ModelQueryBuilder::setDB(null);
-	}
+        unset($this->services);
+    }
 }
