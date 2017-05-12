@@ -1,11 +1,5 @@
 <?php
 
-/**
- * @package	PHP MVC Framework
- * @author 	James Stubbs
- * @version 1.0
- */
-
 namespace PHPMVC\Foundation;
 
 use PHPMVC\DB\DB;
@@ -17,6 +11,14 @@ use PHPMVC\Foundation\Router;
 use PHPMVC\Foundation\Service\ConfigService;
 use PHPMVC\Foundation\Services;
 
+/**
+ * Class  application
+ * The main file hosting the PHP running instance.
+ *
+ * @package  PHPMVC\Foundation
+ * @author   James Stubbs
+ * @version  1.0
+ */
 class Application
 {
     /**
@@ -53,7 +55,9 @@ class Application
 
         $this->setupServices($config);
 
-        if (!$this->services->has('app.debug')) {
+        $inDebug = $this->services->has('debug');
+
+        if (!$inDebug) {
             error_reporting(E_ALL & ~E_NOTICE);
             ini_set('display_errors', 'Off');
         }
@@ -193,7 +197,8 @@ class Application
             $controller->viewError(500);
         }
     }
-    
+
+    // TODO: convert function to a service.
     public static function mail($callback)
     {
         if (!isset(self::$config['MAIL_HOST'])) {
@@ -225,28 +230,27 @@ class Application
         
         return $result;
     }
-    
-	public static function log($logText, $backtraceLevel = 0)
-	{
-		$logFile = self::$configPath . '/log.txt';
-        
+
+    public static function log($logText, $backtraceLevel = 0)
+    {
+        $logFile = self::$configPath . '/log.txt';
+
         if (!file_exists($logFile)) {
             touch($logFile);
         }
-        
+
         if (!is_writable($logFile)) {
             chmod($logFile, 0770);
         }
+
+        $logFileContents = file_get_contents($logFile);
+
+        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+        $backtraceStr = json_encode($backtrace, JSON_PRETTY_PRINT);
         
-        
-		$logFileContents = file_get_contents($logFile);
-		
-		$backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-		$backtraceStr = json_encode($backtrace, JSON_PRETTY_PRINT);
-        
-		$logFileContents .= '(' . date('Y-m-d H:i:s') . ") (Client: {$_SERVER['REMOTE_ADDR']}) ($backtraceStr) $logText\n";
-		file_put_contents($logFile, $logFileContents);
-	}
+        $logFileContents .= '(' . date('Y-m-d H:i:s') . ") (Client: {$_SERVER['REMOTE_ADDR']}) ($backtraceStr) $logText\n";
+        file_put_contents($logFile, $logFileContents);
+    }
 
     public function isWhitelisted()
     {
