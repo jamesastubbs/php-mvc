@@ -9,6 +9,7 @@
 namespace PHPMVC\Foundation;
 
 use PHPMVC\Foundation\Application;
+use PHPMVC\Foundation\HTTP\JSONResponse;
 use PHPMVC\Foundation\HTTP\Response;
 use PHPMVC\Foundation\Interfaces\ServiceableInterface;
 use PHPMVC\Foundation\Services;
@@ -75,6 +76,11 @@ abstract class Controller implements ServiceableInterface
      * @var  boolean
      */
     protected $viewTemplate = true;
+
+    /**
+     * @var  RenderService
+     */
+    private $renderer = null;
 
     public function index()
     {
@@ -180,17 +186,38 @@ abstract class Controller implements ServiceableInterface
         return false;
     }
 
+    // TODO: refactor status code presentation.
+    public function viewError($errorStatus)
+    {
+        $data = ['title' => 'Error', 'code' => $errorStatus, 'message' => ''];
+        $templatePath = $this->getTemplatePath(null, 'error');
+
+        ob_start();
+
+        require_once $templatePath . '/header.php';
+        require_once $templatePath . '/error.php';
+        require_once $templatePath . '/footer.php';
+
+        $body = ob_get_clean();
+
+        return new Response($body, $errorStatus);
+    }
+
     public function viewMaintenance()
     {
         $templatePath = $this->getTemplatePath('maintenance');
 
         if (file_exists($templatePath . '/maintenance.php')) {
+            ob_start();
+
             require_once $templatePath . '/maintenance.php';
-        } else {
-            $this->viewError(503);
+
+            $body = ob_get_clean();
+
+            return new Response($body, Response::STATUS_SERVICE_UNAVAILABLE);
         }
 
-        exit(1);
+        return $this->viewError(Response::STATUS_SERVICE_UNAVAILABLE);
     }
 
     protected function view($view, $data = [], $viewPath = null)
@@ -199,16 +226,11 @@ abstract class Controller implements ServiceableInterface
         $this->viewFunction($view, $data, $this->viewTemplate, $outputStr, $viewPath);
 
         return new Response($outputStr);
-
-        // $this->viewFunction($view, $data, $this->viewTemplate, $viewPath);
     }
 
-    protected function viewJSON($data)
+    protected function viewJSON($data, $status = 200)
     {
-        $jsonOption = $this->inDebug ? JSON_PRETTY_PRINT : 0;
-        error_reporting(0);
-        header("Content-Type: application/json");
-        echo json_encode($data, $jsonOption);
+        return new JSONResponse($data, $status);
     }
 
     protected function viewWithoutTemplate($view, $data = [], $viewPath = null)
@@ -255,6 +277,7 @@ abstract class Controller implements ServiceableInterface
             $data['pageTitle'] = $this->title ?: '';
         }
 
+        $data['services'] = $this->services;
         $data['title'] = $this->appTitle;
 
         $self = &$this;
@@ -414,68 +437,12 @@ abstract class Controller implements ServiceableInterface
         }
     }
 
-    // TODO: refactor status code presentation.
-    public function viewError($errorCode) {
-        $text = '';
-
-        switch ($errorCode) {
-            case 100: $text = 'Continue'; break;
-            case 101: $text = 'Switching Protocols'; break;
-            case 200: $text = 'OK'; break;
-            case 201: $text = 'Created'; break;
-            case 202: $text = 'Accepted'; break;
-            case 203: $text = 'Non-Authoritative Information'; break;
-            case 204: $text = 'No Content'; break;
-            case 205: $text = 'Reset Content'; break;
-            case 206: $text = 'Partial Content'; break;
-            case 300: $text = 'Multiple Choices'; break;
-            case 301: $text = 'Moved Permanently'; break;
-            case 302: $text = 'Moved Temporarily'; break;
-            case 303: $text = 'See Other'; break;
-            case 304: $text = 'Not Modified'; break;
-            case 305: $text = 'Use Proxy'; break;
-            case 400: $text = 'Bad Request'; break;
-            case 401: $text = 'Unauthorized'; break;
-            case 402: $text = 'Payment Required'; break;
-            case 403: $text = 'Forbidden'; break;
-            case 404: $text = 'Not Found'; break;
-            case 405: $text = 'Method Not Allowed'; break;
-            case 406: $text = 'Not Acceptable'; break;
-            case 407: $text = 'Proxy Authentication Required'; break;
-            case 408: $text = 'Request Time-out'; break;
-            case 409: $text = 'Conflict'; break;
-            case 410: $text = 'Gone'; break;
-            case 411: $text = 'Length Required'; break;
-            case 412: $text = 'Precondition Failed'; break;
-            case 413: $text = 'Request Entity Too Large'; break;
-            case 414: $text = 'Request-URI Too Large'; break;
-            case 415: $text = 'Unsupported Media Type'; break;
-            case 500: $text = 'Internal Server Error'; break;
-            case 501: $text = 'Not Implemented'; break;
-            case 502: $text = 'Bad Gateway'; break;
-            case 503: $text = 'Service Unavailable'; break;
-            case 504: $text = 'Gateway Time-out'; break;
-            case 505: $text = 'HTTP Version not supported'; break;
-            default: $text = 'Unknown HTTP Status Code'; break;
-        }
-
-        $protocol = isset($_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : 'HTTP/1.0';
-
-        $headerStr = "$errorCode $text";
-
-        header("$protocol $headerStr");
-        $data = array('title' => 'Error', 'code' => $errorCode, 'message' => $text);
-        $templatePath = $this->getTemplatePath(null, 'error');
-        require_once $templatePath . '/header.php';
-        require_once $templatePath . '/error.php';
-        require_once $templatePath . '/footer.php';
-        exit(1);
-    }
-
     private function getViewPath($prefix = null)
     {
+        // TODO: refactor this. Could potentially use the routing service?
         // get the autoloader to resolve 
-        global $loader;
+        $loader = $this->services->get('app.config', true)->get('app.loader');
+
         $prefixes = array_merge($loader->getPrefixes(), $loader->getPrefixesPsr4());
 
         foreach ($prefixes as $name => $dir) {

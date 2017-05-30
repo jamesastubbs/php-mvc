@@ -3,6 +3,7 @@
 namespace PHPMVC\Foundation;
 
 use PHPMVC\DB\DB;
+use PHPMVC\Foundation\Exception\HTTPException;
 use PHPMVC\Foundation\Exception\NotFoundException;
 use PHPMVC\Foundation\HTTP\Response;
 use PHPMVC\Foundation\Model\Model;
@@ -21,6 +22,11 @@ use PHPMVC\Foundation\Services;
  */
 class Application
 {
+    /**
+     * @var  Response
+     */
+    protected $response = null;
+
     /**
      * @var  Services
      */
@@ -62,17 +68,16 @@ class Application
             ini_set('display_errors', 'Off');
         }
 
-        // display 503: service unavailable if the application is in maintenance mode.
-        if ($this->underMaintenance()) {
-            (new __DefaultController())->viewMaintenance();
-            exit(0);
-        }
-
         if (!$inDebug) {
             if (set_exception_handler([$this, 'handleException']) === false) {
                 echo 'Could not set exception handler.';
                 die(__FILE__ . ':' . __LINE__);
             }
+        }
+
+        // display 503: service unavailable if the application is in maintenance mode.
+        if ($this->underMaintenance()) {
+            throw new HTTPException('', Response::STATUS_SERVICE_UNAVAILABLE);
         }
 
         if (set_error_handler([$this, 'handleError']) === false) {
@@ -108,16 +113,26 @@ class Application
         $this->errorBacktrace = $errorBacktrace;
     }
     
-    public function handleException(\Error $exception)
+    public function handleException($exception)
     {
-        $controller = new \PHPMVC\Foundation\__DefaultController();
-        $exceptionClass = get_class($exception);
-        
-        if ($exceptionClass === NotFoundException::class) {
-            $controller->viewError(404);
-        } else if ($exceptionClass !== NotFoundException::class) {
-            $controller->viewError(500);
+        $errorStatus = Response::STATUS_INTERNAL_SERVER_ERROR;
+
+        if ($this->services->has('app.logger')) {
+            $this->services->get('app.logger')->error($exception->getTraceAsString());
+        } else {
+            error_log($exception->getTraceAsString());
         }
+
+        if ($exception instanceof HTTPException) {
+            $errorStatus = $exception->getCode();
+        }
+
+        $controller = new \PHPMVC\Foundation\__DefaultController();
+        $controller->setServices($this->services);
+
+        $this->response = $controller->viewError($errorStatus);
+
+        $this->shutdownFunction();
     }
 
     public function handleIncomingRequest()
@@ -167,7 +182,9 @@ class Application
             throw new \Exception(
                 'No ' . Response::class . " or subclass was returned from the method '$action' in the controller '$controllerClass'."
             );
-        } elseif (!$response instanceof Response) {
+        }
+
+        if (!$response instanceof Response) {
             throw new \Exception(
                "The return value from the method '$action' in the controller '$controllerClass' which is of type "
                . get_class($response)
@@ -177,24 +194,39 @@ class Application
             );
         }
 
-        $this->services->get('app.renderer', true)->render($response);
+        $this->response = $response;
+        $this->services->get('app.renderer', true); // just call to make sure the rendering service has been implemented.
     }
 
     public function shutdownFunction()
     {
         $error = $this->error ?: error_get_last();
-        $hasDebug = $this->services->has('debug');
+        $inDebug = $this->services->has('debug');
+        $responseValid = $this->response instanceof Response;
 
-        if ($hasDebug) {
+        if ($error !== null) {
+            if ($inDebug) {
+                throw new \Exception("{$error['message']} in {$error['file']} on {$error['line']}");
+            }
+
+            if ($error['type'] !== E_WARNING) {
+                $controller = new __DefaultController();
+                $controller->setServices($this->services);
+                $this->response = $controller->viewError(Response::STATUS_INTERNAL_SERVER_ERROR);
+            }
+        }
+
+        if ($inDebug) {
+            if ($responseValid) {
+                $this->response->setInDebug(true);
+            }
+
             $debugService = $this->services->get('debug');
-
             $debugService->finishProfiling();
         }
 
-        if ($error !== null && !$hasDebug) {
-            $controller = new \PHPMVC\Foundation\__DefaultController();
-            $controller->setServices($this->services);
-            $controller->viewError(500);
+        if ($this->services->has('app.renderer') && $responseValid) {
+            $this->services->get('app.renderer')->render($this->response);
         }
     }
 
@@ -264,20 +296,23 @@ class Application
 
         $rootDir = $configService->get('app.root');
         $whiteListFile = "$rootDir/config/whitelist.txt";
-        $whitelistFileHandler = @fopen($whiteListFile, 'r');
 
-        if ($whitelistFileHandler !== null) {
-            $ips = explode(PHP_EOL, fread($whitelistFileHandler, filesize($whiteListFile)));
+        if (file_exists($whiteListFile)) {
+            $whitelistFileHandler = fopen($whiteListFile, 'r');
 
-            foreach ($ips as $ip) {
-                if (preg_match('/^(?!#).+/', $ip) && preg_match("/$ip/", $_SERVER['REMOTE_ADDR'])) {
-                    $whitelisted = true;
-                    break;
+            if ($whitelistFileHandler !== null) {
+                $ips = explode(PHP_EOL, fread($whitelistFileHandler, filesize($whiteListFile)));
+
+                foreach ($ips as $ip) {
+                    if (preg_match('/^(?!#).+/', $ip) && preg_match("/$ip/", $_SERVER['REMOTE_ADDR'])) {
+                        $whitelisted = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        @fclose($whitelistFileHandler);
+            fclose($whitelistFileHandler);
+        }
 
         return $whitelisted;
     }

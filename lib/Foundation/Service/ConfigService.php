@@ -20,8 +20,13 @@ class ConfigService implements ServiceInterface
 
     public function get($name)
     {
-        $names = explode('.', $name);
         $value = $this->config;
+
+        if (strpos($name, '.') === false) {
+            return isset($value[$name]) ? $value[$name] : null;
+        }
+
+        $names = explode('.', $name);
 
         foreach ($names as $name) {
             $value = isset($value[$name]) ? $value[$name] : null;

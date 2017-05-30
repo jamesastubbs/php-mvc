@@ -4,6 +4,12 @@
         "psr-4": {
             "PHPMVC\\": "lib/"
         }
+    },
+    "require": {
+        "psr/log": "1.*"
+    },
+    "require-dev": {
+        "mikey179/vfsStream": "1.*"
     }
 }
  

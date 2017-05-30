@@ -68,5 +68,33 @@ class DebugService implements ServiceInterface, ServiceableInterface
                 FILE_APPEND
             );
         }
+
+        $rotateCount = intval($configService->get('profiler.rotate'));
+
+        if ($rotateCount !== 0) {
+            $files = glob("$rootPath/*");
+            $filesCount = count($files);
+
+            if ($filesCount > $rotateCount) {
+                usort($files, function($a, $b) {
+                    return filemtime($a) < filemtime($b);
+                });
+
+                while ($filesCount > $rotateCount) {
+                    $filesCount--;
+                    $folder = $files[$filesCount];
+
+                    $subFiles = glob("$folder/*");
+
+                    foreach ($subFiles as $subFile) {
+                        unlink($subFile);
+                    }
+
+                    rmdir($folder);
+
+                    unset($files[$filesCount]);
+                }
+            }
+        }
     }
 }

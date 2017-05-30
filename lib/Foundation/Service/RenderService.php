@@ -2,6 +2,7 @@
 
 namespace PHPMVC\Foundation\Service;
 
+use PHPMVC\Foundation\HTTP\FileResponse;
 use PHPMVC\Foundation\HTTP\Response;
 use PHPMVC\Foundation\Interfaces\ServiceInterface;
 use PHPMVC\Foundation\Interfaces\ServiceableInterface;
@@ -24,6 +25,12 @@ class RenderService implements ServiceInterface, ServiceableInterface
             if ($name === 'Location') {
                 $renderBody = false;
             }
+        }
+
+        if ($response instanceof FileResponse) {
+            readfile($response->getFilePath());
+
+            return;
         }
 
         echo $response->getBody();

@@ -62,6 +62,11 @@ class Response
     protected $headers = [];
 
     /**
+     * @var  boolean|false
+     */
+    protected $inDebug = false;
+
+    /**
      * @var  string
      */
     protected $protocol = 'HTTP/1.0';
@@ -70,6 +75,11 @@ class Response
      * @var  int
      */
     protected $status;
+
+    /**
+     * @var  boolean
+     */
+    protected $streamed = false;
 
     /**
      * @param  string  $body    Data of the HTTP response body.
@@ -113,12 +123,28 @@ class Response
         return $this->status;
     }
 
+    public function isStreamed()
+    {
+        return $this->streamed;
+    }
+
     /**
      * @para  string  $body  Data of the HTTP response body.
      */
     public function setBody($body)
     {
         $this->body = $body;
+    }
+
+    /**
+     * Marks the response in debug or non-debug mode.
+     * This may have an impact on the way the response is presented back to the client.
+     *
+     * @param  boolean  $inDebug
+     */
+    public function setInDebug($inDebug)
+    {
+        $this->inDebug = $inDebug;
     }
 
     public function setProtocol($protocol)
@@ -144,11 +170,30 @@ class Response
     }
 
     /**
-     * @param  string  The compiled status header. Takes the current status and adds the formatted message along with the protocol.
+     * @return  string  The compiled status header. Takes the current status and adds the formatted message along with the protocol.
      */
     public function getStatusHeader()
     {
-        $headerStatuses = [
+        $text = self::getTextForStatus($this->status, $this->protocol);
+
+        return "{$this->protocol} {$this->status} {$text}";
+    }
+
+    public function setIsStreamed($streamed)
+    {
+        $this->streamed = $streamed;
+    }
+
+    public static function getTextForStatus($status)
+    {
+        $headerStatuses = self::getStatusHeaders();
+
+        return isset($headerStatuses[$status]) ? $headerStatuses[$status] : 'Unknown HTTP Status Code';
+    }
+
+    public static function getStatusHeaders()
+    {
+        return [
             self::STATUS_CONTINUE => 'Continue',
             self::STATUS_SWITCHING_PROTOCOLS => 'Switching Protocols',
             self::STATUS_OK => 'OK',
@@ -187,9 +232,5 @@ class Response
             self::STATUS_GATEWAY_TIME_OUT => 'Gateway Time-out',
             self::STATUS_HTTP_VERSION_NOT_SUPPORTED => 'HTTP Version not supported'
         ];
-
-        $statusText = isset($headerStatuses[$this->status]) ? $headerStatuses[$this->status] : 'Unknown HTTP Status Code';
-
-        return "{$this->protocol} {$this->status} {$statusText}";
     }
 }
