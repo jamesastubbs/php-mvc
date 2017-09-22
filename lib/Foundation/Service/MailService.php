@@ -47,8 +47,11 @@ class MailService implements ServiceInterface, ServiceableInterface
         $mailer->SMTPSecure = isset($mailConfig['encryption']) ? $mailConfig['encryption'] : 'none';
         $mailer->SMTPAuth = isset($mailConfig['auth']) ? $mailConfig['auth'] : false;
 
-        $mailer->From = $mailConfig['fromEmail'];
-        $mailer->FromName = $mailConfig['fromName'];
+        $mailer->From = isset($mailConfig['fromEmail']) ? $mailConfig['fromEmail'] : $mailConfig['username'];
+
+        if (isset($mailConfig['fromName'])) {
+            $mailer->FromName = $mailConfig['fromName'];
+        }
 
         foreach ($toAddresses as $email => $name) {
             $mailer->addAddress($email, $name);
