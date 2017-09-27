@@ -107,7 +107,7 @@ class Application
             'message' => $errorStr,
             'type' => E_ERROR
         ];
-        
+
         $errorBacktrace = debug_backtrace();
         $errorBacktrace = array_splice($errorBacktrace, 0, 1);
         $this->errorBacktrace = $errorBacktrace;

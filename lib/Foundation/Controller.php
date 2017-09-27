@@ -259,17 +259,17 @@ abstract class Controller implements ServiceableInterface
 
     protected function viewFunction($view, $data, $viewTemplate, &$outputStr = null, $viewPath = null)
     {
-        if (!is_null($data)) {
-            if ($this->globalViewDataOn) {
-                if ($this->isLoggedIn() && !is_null($this->user)) {
-                    $data['user'] = $this->user;
-                }
+        $data = null === $data ? [] : $data;
 
-                $globalViewData = $this->globalViewData();
+        if ($this->globalViewDataOn) {
+            if ($this->isLoggedIn() && $this->user !== null) {
+                $data['user'] = $this->user;
+            }
 
-                if (!!$globalViewData) {
-                    $data = array_merge($globalViewData, $data);
-                }
+            $globalViewData = $this->globalViewData();
+
+            if ($globalViewData !== null) {
+                $data = array_merge($globalViewData, $data);
             }
         }
 
