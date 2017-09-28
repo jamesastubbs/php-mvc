@@ -18,7 +18,7 @@ class FileResponse extends Response
         parent::__construct('', $status);
     }
 
-    public function getFilePath($filePath)
+    public function getFilePath()
     {
         return $this->filePath;
     }
